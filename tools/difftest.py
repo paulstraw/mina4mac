@@ -232,6 +232,11 @@ def main():
                 stats["ref_skip"] += 1
                 continue
             got, err = run_native(exe, a, regs, xmm, regions, data_region, tmp)
+            if err and err.startswith("no function at"):
+                # An indirect call through random input landed mid-function in .text: Unicorn runs it,
+                # recompiled code can only enter function starts. Input-driven, like other ref_skips.
+                stats["ref_skip"] += 1
+                continue
             if err:
                 stats["native_err"] += 1
                 failures.append((a, t, err))

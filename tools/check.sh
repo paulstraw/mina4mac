@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full verification sequence: survey, build_all, difftest (default and --x87).
+# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest.
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -50,5 +50,11 @@ for mode in default x87; do
         echo "difftest $mode (seed $SEED): ok $stats"
     fi
 done
+
+if uv run tools/atomictest.py >"$LOG/atomictest.log" 2>&1; then
+    echo "atomictest: ok $(tail -1 "$LOG/atomictest.log")"
+else
+    echo "atomictest: FAIL, see $LOG/atomictest.log"; status=1
+fi
 
 exit $status

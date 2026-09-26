@@ -247,7 +247,9 @@ class FnLifter:
         if m.startswith("rep ") or m.startswith("repz ") or m.startswith("repne "):
             prefix, m = m.split(" ", 1)
         if m.startswith("lock "):
-            m = m.split(" ", 1)[1]  # single-threaded semantics are fine per instruction for now
+            return self.lift_locked(m.split(" ", 1)[1], ops)
+        if m == "xchg" and any(o.type == x86.X86_OP_MEM for o in ops):
+            return self.lift_locked(m, ops)  # xchg with memory is implicitly locked
 
         if m == "nop" or m == "wait":
             return
@@ -456,6 +458,44 @@ class FnLifter:
             self.lift_x87(i, m, ops)
         else:
             self.lift_sse(i, m, ops)
+
+    def lift_locked(self, m, ops):
+        """Locked read-modify-write on memory, via the lk_* atomic helpers in cpu.h."""
+        mem = ops[0] if ops[0].type == x86.X86_OP_MEM else ops[1]
+        sz = mem.size
+        a = self.addr(mem.mem)
+        n = 8 * sz
+        if m == "xchg":
+            reg = ops[1] if mem is ops[0] else ops[0]
+            self.wr(reg, f"lk_xchg{n}({a}, {self.rd(reg)})")
+        elif m == "xadd":
+            self.emit(f"{{ {UT[sz]} b_ = {self.rd(ops[1])}, a_ = lk_add{n}({a}, b_), r_ = a_ + b_;")
+            self.flags_add("a_", "b_", "r_", sz)
+            self.wr(ops[1], "a_")
+            self.emit("}")
+        elif m == "cmpxchg":
+            self.emit(f"{{ {UT[sz]} a_ = ({UT[sz]})eax, b_ = lk_cas{n}({a}, a_, {self.rd(ops[1])}), r_ = a_ - b_;")
+            self.flags_sub("a_", "b_", "r_", sz)
+            self.emit("if (!zf) {")
+            self.wr(x86_reg_op(self, "eax", sz), "b_")
+            self.emit("} }")
+        elif m == "cmpxchg8b":
+            self.emit(f"{{ uint64_t e_ = ((uint64_t)edx << 32) | eax, m_ = lk_cas64({a}, e_, ((uint64_t)ecx << 32) | ebx);"
+                      " zf = m_ == e_; eax = (uint32_t)m_; edx = (uint32_t)(m_ >> 32); }")
+        elif m in ("add", "sub", "inc", "dec", "and", "or", "xor"):
+            b = "1" if m in ("inc", "dec") else self.rd(ops[1], sz)
+            fn = {"inc": "add", "dec": "sub"}.get(m, m)
+            op = {"add": "+", "sub": "-", "and": "&", "or": "|", "xor": "^"}[fn]
+            self.emit(f"{{ {UT[sz]} b_ = {b}, a_ = lk_{fn}{n}({a}, b_), r_ = a_ {op} b_; uint8_t scf_ = cf;")
+            if fn in ("and", "or", "xor"):
+                self.flags_logic("r_", sz)
+            else:
+                (self.flags_add if fn == "add" else self.flags_sub)("a_", "b_", "r_", sz)
+            if m in ("inc", "dec"):
+                self.emit("cf = scf_;")
+            self.emit("}")
+        else:
+            raise Unsupported(f"lock {m}")
 
     def string_op(self, m, prefix):
         sz = {"b": 1, "w": 2, "d": 4}[m[-1]]

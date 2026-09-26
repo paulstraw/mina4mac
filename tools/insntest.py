@@ -27,8 +27,10 @@ FLAGS = SCRATCH_LO + SCRATCH_SZ - 4  # where the test stub stores eflags
 CF, PF, ZF, SF, OF = 0x1, 0x4, 0x40, 0x80, 0x800
 # Flags compared per mnemonic: the ones it defines. Anything not listed must leave eflags untouched,
 # so the whole word is compared, which also checks the lifted pushfd's encoding.
-FLAG_MASK = {"imul": CF | OF, "rcr": CF | OF, "rcl": CF | OF, "cmpxchg8b": ZF}
-DEFAULT = ["imul", "cmpxchg8b", "rcr", "cpuid", "punpcklbw", "punpcklwd", "punpckldq", "punpckhbw",
+ARITH = CF | PF | ZF | SF | OF  # AF isn't modelled
+FLAG_MASK = {"imul": CF | OF, "rcr": CF | OF, "rcl": CF | OF, "cmpxchg8b": ZF,
+             "xadd": ARITH, "cmpxchg": ARITH, "add": ARITH, "sub": ARITH, "inc": ARITH, "dec": ARITH}
+DEFAULT = ["imul", "xadd", "xchg", "cmpxchg", "cmpxchg8b", "rcr", "cpuid", "punpcklbw", "punpcklwd", "punpckldq", "punpckhbw",
            "punpckhwd", "psllq", "psrlq", "psllw", "psrlw", "psraw", "psrad", "pslldq", "paddb", "paddw",
            "paddq", "psubw", "psubd", "psubq", "pcmpgtd", "pabsd", "pmulhw", "pmaddwd", "packssdw",
            "packuswb", "pinsrw", "pshufd", "pmovsxbd", "cmpeqsd", "orps", "pxor", "pand", "pandn", "por",

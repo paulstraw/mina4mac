@@ -113,6 +113,33 @@ static inline void cpuid_fixed(uint32_t leaf, uint32_t *a, uint32_t *b, uint32_t
     }
 }
 
+// Locked read-modify-writes (lock-prefixed ops, xchg with memory): seq_cst host atomics on MEM + a.
+// lk_<op>N return the old value; lk_casN returns the old value and stores v only if it equalled e.
+// ARM64 atomics fault on misaligned addresses, so x86 split locks (very rare) fall back to plain,
+// non-atomic accesses.
+#define LOCKED_OPS(N, T)                                                                           \
+    static inline int lk_plain##N(uint32_t a) { return (a & (sizeof(T) - 1)) != 0; }                \
+    static inline T lk_xchg##N(uint32_t a, T v) {                                                    \
+        if (lk_plain##N(a)) { T o = rd##N(a); wr##N(a, v); return o; }                               \
+        return __atomic_exchange_n((T *)P(a), v, __ATOMIC_SEQ_CST);                                 \
+    }                                                                                                \
+    static inline T lk_cas##N(uint32_t a, T e, T v) {                                                \
+        if (lk_plain##N(a)) { T o = rd##N(a); if (o == e) wr##N(a, v); return o; }                   \
+        __atomic_compare_exchange_n((T *)P(a), &e, v, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);       \
+        return e;                                                                                    \
+    }                                                                                                \
+    LOCKED_FETCH(N, T, add, +) LOCKED_FETCH(N, T, sub, -) LOCKED_FETCH(N, T, and, &)                 \
+    LOCKED_FETCH(N, T, or, |) LOCKED_FETCH(N, T, xor, ^)
+#define LOCKED_FETCH(N, T, op, o)                                                                  \
+    static inline T lk_##op##N(uint32_t a, T v) {                                                    \
+        if (lk_plain##N(a)) { T old = rd##N(a); wr##N(a, (T)(old o v)); return old; }                \
+        return __atomic_fetch_##op((T *)P(a), v, __ATOMIC_SEQ_CST);                                 \
+    }
+LOCKED_OPS(8, uint8_t)
+LOCKED_OPS(16, uint16_t)
+LOCKED_OPS(32, uint32_t)
+LOCKED_OPS(64, uint64_t)
+
 typedef void (*GuestFn)(CPU *);
 void guest_call(CPU *c, uint32_t target);   // indirect call dispatch (runtime)
 void guest_import(CPU *c, uint32_t slot);   // call through an IAT slot (runtime)

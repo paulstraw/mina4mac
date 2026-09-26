@@ -175,10 +175,12 @@ Gotchas that already bit us:
   function.
   - 97087/97087 lifted, 0 stubs (check.sh seed 4242: default 2255 pass, x87 159 pass, 0 fail/native_err). No real misdecodes: 0x874fd0 ran into a jump table after a noreturn `_Xlength_error`, so calls to `NORETURN_IMPORTS` (lift.py) now end a block. Also added more SSE int ops, cmpXXsd, pushfd, segment-reg reads (WoW64 selectors), and cmpxchg8b (not atomic yet). Fixed `orps` being lifted as AND, and the harness now starts with fpu_cw=0x27f.
   - New `tools/insntest.py` runs single-instruction Unicorn-vs-native tests on real instances, plus `--at <addrs>`. All new ops pass (6607 trials). cpuid values are in `cpuid_fixed` (cpu.h), and difftest hooks Unicorn with the same values. imul r/m16 never occurs in the binary, so it's untested.
-- [ ] Give lock-prefixed instructions and `xchg` with a memory operand real atomic semantics, using clang
+- [x] Give lock-prefixed instructions and `xchg` with a memory operand real atomic semantics, using clang
   `__atomic` builtins on `MEM + addr`: lock xadd/cmpxchg/cmpxchg8b/add/inc/dec/or/and. Verify with
   `tools/check.sh`, and add a native unit test that hammers `lock xadd` from several host threads through
   recompiled code.
+  - `FnLifter.lift_locked` emits seq_cst `lk_{xchg,cas,add,sub,and,or,xor}{8,16,32,64}` helpers (cpu.h). Misaligned addresses fall back to non-atomic, because ARM64 atomics SIGBUS. The binary only uses lock xadd (72), xchg mem (79), lock cmpxchg (2) and lock cmpxchg8b (2); the other lock ops are untested. Plain loads/stores still lack x86 TSO ordering.
+  - `tools/atomictest.py` + `runtime/atomic_test.c`: 8 threads × 200k on real lifted xadd/xchg-spinlock/cmpxchg/cmpxchg8b, all exact (the old lifter hangs). Added to check.sh. check.sh seed 2601: 97087 lifted; default 2254 / x87 156 pass, 0 fail/native_err. insntest: 1288 pass. difftest now counts "no function at" as ref_skip.
 - [ ] Move shared runtime code (MEM setup, image loading, function lookup, `guest_*`) from `harness.c` and
   `bench.c` into `runtime/rt.c` + `runtime/rt.h`. Replace the binary-search lookup in `guest_call` with an
   O(1) two-level page table (guest addr >> 12 → page of `GuestFn`s). Verify with `tools/check.sh` and
