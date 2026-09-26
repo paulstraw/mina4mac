@@ -141,6 +141,5 @@ LOCKED_OPS(32, uint32_t)
 LOCKED_OPS(64, uint64_t)
 
 typedef void (*GuestFn)(CPU *);
-void guest_call(CPU *c, uint32_t target);   // indirect call dispatch (runtime)
-void guest_import(CPU *c, uint32_t slot);   // call through an IAT slot (runtime)
+void guest_call(CPU *c, uint32_t target);   // indirect call dispatch, including imports (runtime)
 void guest_unimpl(CPU *c, uint32_t addr, const char *what);

@@ -28,8 +28,8 @@ def main():
             lf = FnLifter(prog, a)
             lf.lift()
             ok[a] = dict(callees=lf.callees, n=len(lf.body_set),
-                         indirect=any("guest_call" in l or "guest_import" in l for l in lf.lines),
-                         imports=any("guest_import" in l for l in lf.lines))
+                         indirect=any("guest_call" in l for l in lf.lines),
+                         imports=bool(lf.import_slots))
         except Unsupported as e:
             msg = str(e)
             fail[a] = msg

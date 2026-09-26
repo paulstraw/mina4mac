@@ -110,6 +110,7 @@ class FnLifter:
         self.start = start
         self.lines = []
         self.labels = set()
+        self.import_slots = set()  # IAT slots called or jumped through
 
     # ---- operands -------------------------------------------------------------------------
     def reg_name(self, r):
@@ -218,19 +219,22 @@ class FnLifter:
             self.sync_in()
         self.callees.add(target)
 
-    def call_indirect(self, target_expr, ret_addr, tail=False, import_slot=None):
+    def call_indirect(self, target_expr, ret_addr, tail=False):
         self.emit(f"{{ uint32_t t_ = {target_expr};")
         if not tail:
             self.emit(f"esp -= 4; wr32(esp, {ret_addr:#x}u);")
         self.sync_out()
-        if import_slot is not None:
-            self.emit(f"guest_import(c, {import_slot:#x}u); }}")
-        else:
-            self.emit("guest_call(c, t_); }")
+        self.emit("guest_call(c, t_); }")
         if tail:
             self.emit("return;")
         else:
             self.sync_in()
+
+    def note_import(self, op):
+        """Record a call/jmp through an IAT slot. It's lifted like any indirect call: the loader points
+        the slot at a host thunk (or another module's export) and guest_call dispatches on it."""
+        if op.type == x86.X86_OP_MEM and not op.mem.base and not op.mem.index and (op.mem.disp & 0xffffffff) in self.p.img.imports:
+            self.import_slots.add(op.mem.disp & 0xffffffff)
 
     def goto(self, t):
         if t not in self.body_set:
@@ -523,10 +527,8 @@ class FnLifter:
             for k, t in enumerate(tgts):
                 self.emit(f"case {k}: {self.goto(t)}")
             self.emit(f"default: guest_unimpl(c, {i.address:#x}u, \"switch index\"); return; }}")
-        elif op.type == x86.X86_OP_MEM and not op.mem.base and not op.mem.index and (op.mem.disp & 0xffffffff) in self.p.img.imports:
-            slot = op.mem.disp & 0xffffffff
-            self.call_indirect("0", 0, tail=True, import_slot=slot)
         else:
+            self.note_import(op)
             self.call_indirect(self.rd(op, 4), 0, tail=True)
 
     def lift_call(self, i):
@@ -534,9 +536,8 @@ class FnLifter:
         ret = i.address + i.size
         if op.type == x86.X86_OP_IMM:
             self.call_direct(op.imm & 0xffffffff, ret)
-        elif op.type == x86.X86_OP_MEM and not op.mem.base and not op.mem.index and (op.mem.disp & 0xffffffff) in self.p.img.imports:
-            self.call_indirect("0", ret, import_slot=op.mem.disp & 0xffffffff)
         else:
+            self.note_import(op)
             self.call_indirect(self.rd(op, 4), ret)
 
     def st_index(self, op):

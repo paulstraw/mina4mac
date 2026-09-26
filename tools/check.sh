@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest.
+# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest.
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -55,6 +55,12 @@ if uv run tools/atomictest.py >"$LOG/atomictest.log" 2>&1; then
     echo "atomictest: ok $(tail -1 "$LOG/atomictest.log")"
 else
     echo "atomictest: FAIL, see $LOG/atomictest.log"; status=1
+fi
+
+if uv run tools/importtest.py >"$LOG/importtest.log" 2>&1; then
+    echo "importtest: ok $(grep -c ' ok ' "$LOG/importtest.log") checks"
+else
+    echo "importtest: FAIL, see $LOG/importtest.log"; status=1
 fi
 
 exit $status

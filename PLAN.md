@@ -207,7 +207,7 @@ Gotchas that already bit us:
 
 ### Phase 2: runtime and startup
 
-- [ ] Import thunks.
+- [x] Import thunks.
   - Reserve a guest address range for host functions, e.g. 0xF0000000 + 16*n.
   - The loader writes a thunk address into every IAT slot (exe and recompiled DLLs). Change the lifter so
     `call [IAT slot]` and `jmp [IAT slot]` become an ordinary `guest_call(c, rd32(slot))`, and remove
@@ -215,6 +215,8 @@ Gotchas that already bit us:
   - `guest_call` on a thunk address invokes the host implementation.
   - Calling an unimplemented import aborts, printing `dll!name` and the guest return address.
   - Verify with `tools/check.sh` and a unit test that calls a fake host import through a thunk.
+  - rt.h: `THUNK_BASE`/`THUNK_STRIDE`, `rt_bind_imports(base)` (parses the PE import dir in guest memory), `rt_thunk(dll,name)`, `rt_register_import(dll,name,GuestFn)`; host fns pop their own ret/args; unimplemented exits 4. Thunks are only checked on rt_lookup miss (bench unchanged). All slots bind to thunks, incl. MSVCP120 — resolving to recompiled msvcp120 exports is still TODO. `FnLifter.import_slots` replaces survey's guest_import grep.
+  - `tools/importtest.py` + `runtime/import_test.c` (in check.sh): binds 635 noita slots, lifted call/jmp [slot] + direct guest_call, unimpl message; 15 checks ok. check.sh seed 3141: 97087 lifted; default 2286 / x87 156 pass, 0 fail/native_err.
 - [ ] Host function registry.
   - Add a C table or macros to declare host implementations by `dll!name`, with a calling convention
     (cdecl, or stdcall with arg bytes).
