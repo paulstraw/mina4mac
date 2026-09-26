@@ -14,6 +14,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "heap.h"
@@ -170,6 +171,17 @@ static void initializer_imports(CPU *cp, CPU *c2) {
     CRT("srand", 1);
     uint32_t r1 = CRT("rand"), r2 = CRT("rand"), r3 = CRT("rand");
     CHECK("rand: MSVC LCG sequence", r1 == 41 && r2 == 18467 && r3 == 6334, 1);
+    uint32_t wbuf = heap_alloc(32), conv = heap_alloc(4);
+    CHECK("mbstowcs_s", CRT("mbstowcs_s", conv, wbuf, 16, s1, 0xffffffff), 0);
+    CHECK("... converted incl. NUL, wide", rd32(conv) == 12 && rd16(wbuf) == 'h' && rd16(wbuf + 22) == 0, 1);
+    CHECK("mbstowcs_s too small", CRT("mbstowcs_s", conv, wbuf, 4, s1, 11) == 34 && rd16(wbuf) == 0, 1);
+    CHECK("mbstowcs_s _TRUNCATE", CRT("mbstowcs_s", conv, wbuf, 4, s1, 0xffffffff) == 80 && rd32(conv) == 4, 1);
+    uint32_t ep = heap_alloc(8), ep2 = heap_alloc(8);
+    wr64(ep, ~0ull);
+    CRT("?__ExceptionPtrCreate@@YAXPAX@Z", ep);
+    CRT("?__ExceptionPtrCopy@@YAXPAXPBX@Z", ep2, ep);
+    CHECK("exception_ptr: null, copies null", rd64(ep) == 0 && rd64(ep2) == 0
+          && CRT("?__ExceptionPtrToBool@@YA_NPBX@Z", ep) == 0, 1);
     CHECK("strcpy_s too small", CRT("strcpy_s", buf, 4, s1) == 34 && rd8(buf) == 0, 1);
 
     // Locale.
@@ -502,6 +514,12 @@ static void sdl_main_imports(CPU *cp) {
     CHECK("FMOD released system invalid", FS("?isValid@System@Studio@FMOD@@QBG_NXZ", fsys) & 0xff, 0);
     CHECK("glClear, no context: pops 4", call(&c, "opengl32.dll", "glClear", 1, (uint32_t[]){0x4000}), c.esp);
     CHECK("glGetString, no context", (call(&c, "opengl32.dll", "glGetString", 1, (uint32_t[]){0x1f00}), c.eax), 0);
+    CHECK("glCreateShader, no context: 0", (call(&c, "opengl32.dll", "glCreateShader", 1, (uint32_t[]){0x8b31}), c.eax), 0);
+    CHECK("glShaderSource, no context: pops 16", call(&c, "opengl32.dll", "glShaderSource", 4, (uint32_t[]){1, 1, 0, 0}), c.esp);
+    // WININET offline: no session, ERROR_INTERNET_NAME_NOT_RESOLVED.
+    CHECK("InternetOpenA: pops 20", call(&c, "WININET.dll", "InternetOpenA", 5, (uint32_t[]){0, 0, 0, 0, 0}), c.esp);
+    CHECK("... fails", c.eax, 0);
+    CHECK("... last error 12007", K32("GetLastError"), 12007);
 
     snprintf(p, sizeof p, "rm -rf '%s'", tmp);
     CHECK("cleanup", system(p), 0);
@@ -704,6 +722,20 @@ int main(int argc, char **argv) {
     K32("QueryPerformanceCounter", t); usleep(2000); K32("QueryPerformanceCounter", t + 8);
     uint64_t dt = (rd64(t + 8) - rd64(t)) * 1000 / freq;  // ms
     CHECK("QueryPerformanceCounter ~2 ms", dt >= 2 && dt < 100, 1);
+    wr64(t, 132223104001230000ull + 36000000000ull * 13);  // 2020-01-01 13:00:00.123 UTC, a Wednesday
+    uint32_t sys = heap_alloc(16), lt = heap_alloc(16);
+    CHECK("FileTimeToSystemTime", K32("FileTimeToSystemTime", t, sys), 1);
+    CHECK("... 2020-01-01 (Wed) 13:00:00.123", rd16(sys) == 2020 && rd16(sys + 2) == 1 && rd16(sys + 4) == 3
+          && rd16(sys + 6) == 1 && rd16(sys + 8) == 13 && rd16(sys + 10) == 0 && rd16(sys + 12) == 0 && rd16(sys + 14) == 123, 1);
+    time_t secs = 1577883600;  // the same instant
+    struct tm tm;
+    localtime_r(&secs, &tm);
+    CHECK("SystemTimeToTzSpecificLocalTime (host zone)", K32("SystemTimeToTzSpecificLocalTime", 0, sys, lt), 1);
+    CHECK("... hour and ms", rd16(lt + 8) == tm.tm_hour && rd16(lt + 6) == tm.tm_mday && rd16(lt + 14) == 123, 1);
+    K32("GetLocalTime", lt);
+    CHECK("GetLocalTime year", rd16(lt) >= 2020 && rd16(lt + 2) >= 1 && rd16(lt + 2) <= 12, 1);
+    CHECK("timeBeginPeriod", (call(&c, "WINMM.dll", "timeBeginPeriod", 1, (uint32_t[]){1}), c.eax), 0);
+    CHECK("FindFirstChangeNotificationW fails", K32("FindFirstChangeNotificationW", gws("."), 0, 1), 0xffffffff);
     initializer_imports(&c, &c2);
     sdl_main_imports(&c);
     msvcp120_binding(argv[2]);

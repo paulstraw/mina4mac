@@ -111,7 +111,8 @@ else
 fi
 
 # The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.
-timeout 300 build/noitamac >"$LOG/launcher.log" 2>&1
+# The scripted clicks pick New Game, then the first game mode (window points of the default 1280x720 window).
+NOITAMAC_CLICKS="40:639,352;45:445,250" timeout 300 build/noitamac >"$LOG/launcher.log" 2>&1
 rc=$?
 stop=$(grep -m1 -E '^(unimplemented|unimpl|no function|guest)' "$LOG/launcher.log" || tail -1 "$LOG/launcher.log")
 echo "launcher: exit $rc, $stop"

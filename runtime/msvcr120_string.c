@@ -63,6 +63,27 @@ HOST_CDECL(msvcr120, _wcsdup) {
     if (p) memcpy(P(p), ARG_PTR(0), n);
     ret_i32(c, p);
 }
+// mbstowcs_s(size_t *converted, wchar_t *dest, size_t size in wchars, const char *src, size_t count). The
+// "C" locale maps each byte to the wchar of the same value. *converted includes the NUL.
+enum { TRUNCATE_ = 0xffffffff, STRUNCATE_ = 80 };
+HOST_CDECL(msvcr120, mbstowcs_s) {
+    uint32_t dst = ARG(1), size = ARG(2), count = ARG(4);
+    const uint8_t *src = ARG_PTR(3);
+    uint32_t n = strnlen((const char *)src, count == TRUNCATE_ ? SIZE_MAX : count), err = 0;
+    if (dst) {
+        if (n >= size) {
+            if (count != TRUNCATE_ || !size) {
+                if (size) wr16(dst, 0);
+                return ret_i32(c, ERANGE_);
+            }
+            n = size - 1, err = STRUNCATE_;
+        }
+        for (uint32_t i = 0; i < n; i++) wr16(dst + 2 * i, src[i]);
+        wr16(dst + 2 * n, 0);
+    }
+    if (ARG(0)) wr32(ARG(0), n + 1);
+    ret_i32(c, err);
+}
 
 // ctype in the "C" locale: only ASCII has classes. EOF (-1) and bytes >= 0x80 have none.
 static int ascii(uint32_t ch) { return ch < 0x80; }

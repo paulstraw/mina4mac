@@ -207,3 +207,10 @@ HOST_STDCALL(kernel32, CopyFileW, 12) {
     if (!path_w(ARG(0), from, sizeof from) || !path_w(ARG(1), to, sizeof to)) return set_error(c, ERROR_PATH_NOT_FOUND), ret_i32(c, 0);
     ret_i32(c, copy_file(c, from, to, ARG(2)));
 }
+
+// Directory change notifications aren't supported: FindFirstChangeNotificationW(path, subtree, filter)
+// fails with INVALID_HANDLE_VALUE (ERROR_NOT_SUPPORTED).
+HOST_STDCALL(kernel32, FindFirstChangeNotificationW, 12) {
+    wr32(c->fs_base + TEB_LAST_ERROR, 50);
+    ret_i32(c, 0xffffffff);
+}

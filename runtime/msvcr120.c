@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "heap.h"
 #include "hle.h"
@@ -283,6 +284,7 @@ HOST_CDECL(msvcr120, __RTtypeid) {
 }
 HOST_CDECL(msvcr120, __clean_type_info_names_internal) {}
 
+HOST_CDECL(msvcr120, __crtSleep) { usleep(ARG(0) * 1000); }  // Sleep(ms), for msvcp120's thread::sleep_*
 HOST_CDECL(msvcr120, _errno) { ret_i32(c, c->fs_base + TEB_CRT_ERRNO); }
 
 // Time.
@@ -308,3 +310,12 @@ HOST_CDECL(msvcr120, _localtime64) {
 
 // Exceptions: none are ever in flight (guest C++ exceptions aren't supported yet).
 HOST_CDECL(msvcr120, __uncaught_exception) { ret_i32(c, 0); }
+
+// std::exception_ptr is a shared_ptr (8 bytes: object, control block). With no guest exceptions, every
+// exception_ptr is null; make_exception_ptr (__ExceptionPtrCopyException) and rethrow stay unimplemented.
+HOST(msvcr120, eptr_create, "?__ExceptionPtrCreate@@YAXPAX@Z", 0) { wr64(ARG(0), 0); }
+HOST(msvcr120, eptr_destroy, "?__ExceptionPtrDestroy@@YAXPAX@Z", 0) {}
+HOST(msvcr120, eptr_copy, "?__ExceptionPtrCopy@@YAXPAXPBX@Z", 0) { wr64(ARG(0), rd64(ARG(1))); }
+HOST(msvcr120, eptr_assign, "?__ExceptionPtrAssign@@YAXPAXPBX@Z", 0) { wr64(ARG(0), rd64(ARG(1))); }
+HOST(msvcr120, eptr_to_bool, "?__ExceptionPtrToBool@@YA_NPBX@Z", 0) { ret_i32(c, rd32(ARG(0)) != 0); }
+HOST(msvcr120, eptr_current, "?__ExceptionPtrCurrentException@@YAXPAX@Z", 0) { wr64(ARG(0), 0); }

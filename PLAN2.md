@@ -86,7 +86,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Record where startup stops next.
   - Handles are 16-byte {magic, kind, userdata, name}; banks/buses/descriptions are one per path. getVersion must report ≥0x20105 (checked at 0x47a738). Banks have 0 events, so getEventList is skipped. getUserProperty returns 74 (EVENT_NOTFOUND), which the game treats as "absent"; getEvent also accepts 74 but returns OK. Startup: create/initialize, 2 banks, 7 buses, update. envtest 195 checks; check.sh seed 22320 all ok.
   - Next stop: `opengl32!glCreateShader` from 0xdd64f1, before any `lua51` call. The next task needs GL shader stand-ins (or the Phase 6 bridge) first.
-- [ ] Run to the first `lua51` call, then inventory how the game uses Lua, to feed Phase 5.
+- [x] Run to the first `lua51` call, then inventory how the game uses Lua, to feed Phase 5.
   - Which of the 171 imports are called and which are only address-taken? Log the address-taken ones
     (the sandbox patches) together with the code that patches them.
   - How many `lua_State`s are created, on which threads, and with which `luaopen_*` libraries?
@@ -94,6 +94,8 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Does anything read LuaJIT object internals directly (for example `L->top`) instead of going through
     the API?
   - Record the answers in the note. Do not implement Lua yet.
+  - No Lua before the menu, which now renders fully (opengl32.c forwards ~80 GL 2.1 calls: shaders, buffers, client/attrib arrays with buffer-offset handling, ARB FBOs; plus timeBeginPeriod, FileTimeToSystemTime/SystemTimeToTzSpecificLocalTime/GetLocalTime, null exception_ptr, mbstowcs_s, __crtSleep, offline wininet.c, failing FindFirstChangeNotificationW). New `NOITAMAC_CLICKS="t:x,y;…"` (sdl2.c; CGEvent posting is blocked without Accessibility) clicks New Game + first mode; check.sh uses it and stops at `luaL_newstate` from 0x7ed89e on a job-system worker thread (tid 0x130, via 0x849bc0 → 0x6afaa0 → 0x832dc0 → 0x7ed620). check.sh seed 31337 all ok, envtest 212.
+  - `uv run tools/luasurvey.py` has the details. 50 imports are called; 121 (+ luaL_openlibs) are only stored into the sandbox list of 0x7ee720(cl=patch): per function VirtualProtect(16) and write `C7 05 00000000 00000000` (mov [0],0), originals saved once in a VirtualAlloc buffer and restored with cl=0 (callers 0x836e70/0x6daf60 patch, 0x9a0980 restores). All states come from 0x7ed880 (1 luaL_newstate site, called via 0x7ed620 from 15 places: created and lua_closed dynamically, likely per LuaComponent), on worker threads, so the bridge needs per-thread CPUs. It runs luaL_openlibs if [this+0x4e] (unsafe mods), else pushes the *thunks* of luaopen_base/table/string/math/bit/jit via lua_pushcclosure + lua_call (the bridge must map lua51 thunks to host functions), nils load/loadfile/loadstring/gcinfo/collectgarbage and defines dofile/dofile_once in Lua. st0: lua_tonumber (356 sites); lua_pushnumber takes a double arg. lua_Debug (32-bit, 100 bytes; name/what/source are pointers, which must point into guest memory) is used by the exe's own luaL_traceback copy 0x7ec490 (reads currentline +20, short_src +36) and 0x7ec2a0/0x7ec350. All 109 pushcclosure calls use 0 upvalues; the only pseudo-indices are GLOBALSINDEX and REGISTRYINDEX; no lua_error/luaL_error/userdata imports; lua_topointer (41 sites) and lua_tolstring pointers must be guest addresses. No lua_State field reads were found in the 401 registered C functions.
 
 ### Phase 5: LuaJIT
 

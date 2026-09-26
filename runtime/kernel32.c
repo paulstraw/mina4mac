@@ -64,6 +64,37 @@ HOST_STDCALL(kernel32, GetSystemTimeAsFileTime, 4) {
     clock_gettime(CLOCK_REALTIME, &ts);
     wr64(ARG(0), ((uint64_t)ts.tv_sec + FILETIME_UNIX_EPOCH_SECS) * 10000000 + ts.tv_nsec / 100);
 }
+// SYSTEMTIME is 8 WORDs: year, month, day of week, day, hour, minute, second, milliseconds.
+static void wr_systemtime(uint32_t st, const struct tm *tm, uint32_t ms) {
+    uint16_t v[8] = {tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_wday, tm->tm_mday, tm->tm_hour, tm->tm_min,
+                     tm->tm_sec, ms};
+    for (int i = 0; i < 8; i++) wr16(st + 2 * i, v[i]);
+}
+HOST_STDCALL(kernel32, FileTimeToSystemTime, 8) {
+    uint64_t ft = rd64(ARG(0));
+    time_t secs = (time_t)(ft / 10000000) - FILETIME_UNIX_EPOCH_SECS;
+    struct tm tm;
+    if (ft >> 63 || !gmtime_r(&secs, &tm)) return ret_i32(c, 0);
+    wr_systemtime(ARG(1), &tm, ft / 10000 % 1000);
+    ret_i32(c, 1);
+}
+HOST_STDCALL(kernel32, GetLocalTime, 4) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+    wr_systemtime(ARG(0), &tm, ts.tv_nsec / 1000000);
+}
+// Only the host's current time zone (a NULL TIME_ZONE_INFORMATION) is supported.
+HOST_STDCALL(kernel32, SystemTimeToTzSpecificLocalTime, 12) {
+    uint32_t u = ARG(1);
+    struct tm tm = {.tm_year = rd16(u) - 1900, .tm_mon = rd16(u + 2) - 1, .tm_mday = rd16(u + 6),
+                    .tm_hour = rd16(u + 8), .tm_min = rd16(u + 10), .tm_sec = rd16(u + 12)};
+    time_t secs = timegm(&tm);
+    if (ARG(0) || !localtime_r(&secs, &tm)) return ret_i32(c, 0);
+    wr_systemtime(ARG(2), &tm, rd16(u + 14));
+    ret_i32(c, 1);
+}
 HOST_STDCALL(kernel32, QueryPerformanceCounter, 4) {
     wr64(ARG(0), clock_gettime_nsec_np(CLOCK_UPTIME_RAW));
     ret_i32(c, 1);
@@ -72,6 +103,8 @@ HOST_STDCALL(kernel32, QueryPerformanceFrequency, 4) {
     wr64(ARG(0), 1000000000);
     ret_i32(c, 1);
 }
+// WINMM: the host timer resolution needs no raising; TIMERR_NOERROR.
+HOST_STDCALL(winmm, timeBeginPeriod, 4) { ret_i32(c, 0); }
 
 // Critical sections. A guest CRITICAL_SECTION (24 bytes) is backed by a host sync object (sync.h), whose
 // id is kept in its LockSemaphore field. OwningThread and RecursionCount are kept up to date for guest

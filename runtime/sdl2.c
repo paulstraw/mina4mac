@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "heap.h"
 #include "hle.h"
@@ -233,7 +234,40 @@ static void event_to_guest(SDL_Event *e, uint32_t g) {
     }
 }
 
+// Scripted input for driving the game without a person (the game reads the mouse only through events):
+// NOITAMAC_CLICKS="t:x,y[;t:x,y...]" left-clicks at window point (x, y), t seconds after the first
+// SDL_PollEvent. The button is released 100 ms later, a few frames after it went down.
+static void scripted_input(void) {
+    static const char *next;
+    static uint32_t t0, up;  // up: when a pending click's release is due
+    if (!t0) {
+        t0 = SDL_GetTicks() | 1;
+        next = getenv("NOITAMAC_CLICKS");
+    }
+    SDL_Window *w = SDL_GL_GetCurrentWindow();
+    SDL_Event e = {0};
+    e.button.windowID = w ? SDL_GetWindowID(w) : 0;
+    e.button.button = SDL_BUTTON_LEFT;
+    static int x, y;
+    if (up) {
+        if (SDL_GetTicks() < up) return;
+        up = 0;
+        e.type = SDL_MOUSEBUTTONUP, e.button.x = x, e.button.y = y;
+        SDL_PushEvent(&e);
+        return;
+    }
+    double t;
+    if (!next || !*next || sscanf(next, "%lf:%d,%d", &t, &x, &y) != 3 || SDL_GetTicks() - t0 < t * 1000) return;
+    next = strchr(next, ';') ? strchr(next, ';') + 1 : "";
+    e.type = SDL_MOUSEMOTION, e.motion.x = x, e.motion.y = y;
+    SDL_PushEvent(&e);
+    e.type = SDL_MOUSEBUTTONDOWN, e.button.x = x, e.button.y = y, e.button.state = SDL_PRESSED, e.button.clicks = 1;
+    SDL_PushEvent(&e);
+    up = SDL_GetTicks() + 100;
+}
+
 HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
+    scripted_input();
     SDL_Event e;
     int r = SDL_PollEvent(ARG(0) ? &e : NULL);
     if (r && ARG(0)) event_to_guest(&e, ARG(0));
