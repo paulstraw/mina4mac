@@ -76,7 +76,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     translation issues (`Z:\`, case sensitivity, `/` vs `\`).
   - `tools/setup_game.sh [src]` (`NOITA_SRC`/`NOITA_DIR`) rsyncs data/, mods/, config.xml and the _branch/_version/_release_notes/screenshot_paths files; refuses an un-ignored destination in the repo. No file-API gaps: logger is clean. Opens (`NOITAMAC_TRACE_FILES=1`): `data/data.wak` twice (via msvcp `_wfsopen`; all of `data/…` incl. ui_gfx/translations comes from it, read whole through an inlined `basic_filebuf` = 42.5M `fgetc` calls, ~1 s, since our FILE has no guest buffer), `data/icon.bmp`, config.xml, `mods\*` (FindFirstFileW) + each mod's mod.xml/compatibility.xml/settings.lua, LocalLow save_shared/config.xml and save00/mod_*. Paths are relative with `/` or absolute `Z:\…` with `\`; APFS is case-insensitive, so no case issues.
   - Also fixed on the way: x87 lifter bugs only msvcp120 hits (`fxch st(i)` was a no-op; one-operand `fadd/fmul/fdiv st(i)` wrote st(i), not st(0)) → stack-cookie failure in float parsing; new `insntest.py --x87reg` (x87regtest in check.sh). opengl32.c forwards glGen/Delete/BindTexture, glTexParameteri, glTex(Sub)Image2D. check.sh seed 1357 all ok; launcher again stops at `fmodstudio!FMOD::Studio::System::create` from 0x47a6fb.
-- [ ] FMOD silent stub (`runtime/fmod_stub.c`). Implement all 42 imports with `HOST(...)` and the
+- [x] FMOD silent stub (`runtime/fmod_stub.c`). Implement all 42 imports with `HOST(...)` and the
   mangled names.
   - Handles are small guest-heap objects so `isValid` and `get/setUserData` behave correctly.
   - Every function returns `FMOD_OK`, and callbacks never fire.
@@ -84,6 +84,8 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     carry on. Read the call sites to decide.
   - Keep the stub selectable later with `NOITAMAC_AUDIO=stub` once real audio exists.
   - Record where startup stops next.
+  - Handles are 16-byte {magic, kind, userdata, name}; banks/buses/descriptions are one per path. getVersion must report ≥0x20105 (checked at 0x47a738). Banks have 0 events, so getEventList is skipped. getUserProperty returns 74 (EVENT_NOTFOUND), which the game treats as "absent"; getEvent also accepts 74 but returns OK. Startup: create/initialize, 2 banks, 7 buses, update. envtest 195 checks; check.sh seed 22320 all ok.
+  - Next stop: `opengl32!glCreateShader` from 0xdd64f1, before any `lua51` call. The next task needs GL shader stand-ins (or the Phase 6 bridge) first.
 - [ ] Run to the first `lua51` call, then inventory how the game uses Lua, to feed Phase 5.
   - Which of the 171 imports are called and which are only address-taken? Log the address-taken ones
     (the sandbox patches) together with the code that patches them.

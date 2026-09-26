@@ -57,6 +57,7 @@ sandbox patches LuaJIT functions that way) only change memory.
 | `thread.c` | guest threads: `_beginthreadex`/`_endthreadex`, Wait/GetExitCode/ResumeThread on thread handles |
 | `shlwapi.c`, `shell32.c` | SHLWAPI (PathAppendW); SHELL32 known folders and directory creation, ole32 CoTaskMemFree |
 | `galaxy.c` | GOG Galaxy stubbed offline: the interface accessors return NULL, which the game checks |
+| `fmod_stub.c` | FMOD Studio/core stubbed silent: guest-heap handles, every call succeeds, banks hold no events, callbacks never fire |
 | `opengl32.c` | a few GL 1.1 calls forwarded to the host's OpenGL when a context is current (no-ops otherwise), until the generated GL bridge exists |
 | `sdl2_stdlib.c` | the SDL2 C-library helpers SDL2main's WinMain uses (SDL_malloc/free/wcslen/isspace/iconv_string) and SDL_SetMainReady, which traces SDL_main's entry |
 | `hle.c`/`hle.h` | helpers shared by HLE files: guest strings, UTF-8/16, Windows paths, errno |

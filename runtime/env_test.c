@@ -464,6 +464,42 @@ static void sdl_main_imports(CPU *cp) {
 
     // Galaxy offline, GL with no context current (a no-op, still popping its stdcall args).
     CHECK("Galaxy User() = NULL", (call(&c, "Galaxy.dll", "?User@api@galaxy@@YAPAVIUser@12@XZ", 0, NULL), c.eax), 0);
+    // FMOD silent stub: handles, user data, version, empty banks, per-path descriptions.
+#define FS(name, ...) (call(&c, "fmodstudio.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
+    uint32_t fo = heap_calloc(4, 4), fsys, fev, fev2, finst, fbuf = heap_alloc(64);
+    CHECK("FMOD create", FS("?create@System@Studio@FMOD@@SG?AW4FMOD_RESULT@@PAPAV123@I@Z", fo, 0x20105), 0);
+    fsys = rd32(fo);
+    CHECK("FMOD System isValid", FS("?isValid@System@Studio@FMOD@@QBG_NXZ", fsys) & 0xff, 1);
+    CHECK("FMOD isValid(garbage)", FS("?isValid@System@Studio@FMOD@@QBG_NXZ", fbuf) & 0xff, 0);
+    FS("?getCoreSystem@System@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PAPAV13@@Z", fsys, fo);
+    CHECK("FMOD getVersion pops 8", call(&c, "fmod.dll", "?getVersion@System@FMOD@@QAG?AW4FMOD_RESULT@@PAI@Z", 2,
+                                         (uint32_t[]){rd32(fo), fo + 4}), c.esp);
+    CHECK("FMOD getVersion", rd32(fo + 4), 0x20105);
+    FS("?loadBankFile@System@Studio@FMOD@@QAG?AW4FMOD_RESULT@@PBDIPAPAVBank@23@@Z", fsys, gs("data/audio/x.bank"), 0, fo);
+    wr32(fo + 4, 7);
+    FS("?getEventCount@Bank@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PAH@Z", rd32(fo), fo + 4);
+    CHECK("FMOD bank has no events", rd32(fo + 4), 0);
+    FS("?getEvent@System@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PBDPAPAVEventDescription@23@@Z", fsys, gs("event:/a/b"), fo);
+    fev = rd32(fo);
+    FS("?getEvent@System@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PBDPAPAVEventDescription@23@@Z", fsys, gs("event:/a/b"), fo);
+    fev2 = rd32(fo);
+    CHECK("FMOD getEvent same path, same handle", fev && fev == fev2, 1);
+    FS("?getPath@EventDescription@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PADHPAH@Z", fev, fbuf, 6, fo + 4);
+    CHECK("FMOD getPath truncated", !strcmp((char *)P(fbuf), "event") && rd32(fo + 4) == 11, 1);
+    CHECK("FMOD getUserProperty not found", FS("?getUserProperty@EventDescription@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PBDPAUFMOD_STUDIO_USER_PROPERTY@@@Z",
+                                                fev, gs("x"), fbuf), 74);
+    FS("?createInstance@EventDescription@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PAPAVEventInstance@23@@Z", fev, fo);
+    finst = rd32(fo);
+    FS("?setUserData@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@PAX@Z", finst, 0xabcd);
+    FS("?getUserData@EventInstance@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PAPAX@Z", finst, fo + 8);
+    CHECK("FMOD instance user data", rd32(fo + 8), 0xabcd);
+    CHECK("FMOD instance isValid", FS("?isValid@EventInstance@Studio@FMOD@@QBG_NXZ", finst) & 0xff, 1);
+    FS("?release@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@XZ", finst);
+    CHECK("FMOD released instance invalid", FS("?isValid@EventInstance@Studio@FMOD@@QBG_NXZ", finst) & 0xff, 0);
+    CHECK("FMOD setParameterByName pops 16", call(&c, "fmodstudio.dll", "?setParameterByName@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@PBDM_N@Z",
+                                                  4, (uint32_t[]){finst, gs("p"), 0, 0}), c.esp);
+    FS("?release@System@Studio@FMOD@@QAG?AW4FMOD_RESULT@@XZ", fsys);
+    CHECK("FMOD released system invalid", FS("?isValid@System@Studio@FMOD@@QBG_NXZ", fsys) & 0xff, 0);
     CHECK("glClear, no context: pops 4", call(&c, "opengl32.dll", "glClear", 1, (uint32_t[]){0x4000}), c.esp);
     CHECK("glGetString, no context", (call(&c, "opengl32.dll", "glGetString", 1, (uint32_t[]){0x1f00}), c.eax), 0);
 

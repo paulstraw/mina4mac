@@ -21,7 +21,7 @@ from pe import MODULES, build_dir  # noqa: E402
 import gen_sdl  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
-LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "kernel32_file.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "shell32.c", "galaxy.c", "opengl32.c", "thread.c", "sdl2_stdlib.c")  # runtime files only the launcher links
+LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "kernel32_file.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "shell32.c", "galaxy.c", "fmod_stub.c", "opengl32.c", "thread.c", "sdl2_stdlib.c")  # runtime files only the launcher links
 SDL = ("sdl2.c",)  # runtime files of the SDL2 bridge (launcher only; compiled with the host SDL2's flags)
 CHUNKS = 128
 _prog = None
