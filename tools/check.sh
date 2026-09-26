@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
-# hosttest, envtest, loadtest, undnametest, then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, sdltest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest/undnametest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -92,6 +92,16 @@ if uv run tools/undnametest.py >"$LOG/undnametest.log" 2>&1; then
     echo "undnametest: ok $(tail -1 "$LOG/undnametest.log")"
 else
     echo "undnametest: FAIL, see $LOG/undnametest.log"; status=1
+fi
+
+# sdltest needs build/gen_all/sdl2_gen.c and sdl2_layout.h, which build_all generates (tools/gen_sdl.py).
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime -I build/gen_all $(sdl2-config --cflags) \
+        runtime/sdl_test.c runtime/rt.c runtime/heap.c runtime/hle.c runtime/sdl2.c runtime/sdl2_stdlib.c \
+        build/gen_all/sdl2_gen.c $(sdl2-config --libs) -o build/sdltest >"$LOG/sdltest.log" 2>&1 \
+        && build/sdltest >>"$LOG/sdltest.log" 2>&1; then
+    echo "sdltest: ok $(grep -c ' ok ' "$LOG/sdltest.log") checks"
+else
+    echo "sdltest: FAIL, see $LOG/sdltest.log"; status=1
 fi
 
 build/noitamac >"$LOG/launcher.log" 2>&1

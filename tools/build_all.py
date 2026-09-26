@@ -1,6 +1,6 @@
 """Lift every function of the given modules (default: noita and msvcp120, which the launcher needs) into chunked C files, compile them in
 parallel, link the test harness (build/harness_all), the microbenchmark (build/bench <image.bin>) and the
-launcher (build/noitamac).
+launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2).
 
 Per-module chunks go in build/<module>/gen/; the combined decls.h, FN_TABLE and runtime objects go in
 build/gen_all/. Functions the lifter can't handle yet become stubs that report guest_unimpl.
@@ -18,9 +18,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
+import gen_sdl  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
 LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "sdl2_stdlib.c")  # runtime files only the launcher links
+SDL = ("sdl2.c",)  # runtime files of the SDL2 bridge (launcher only; compiled with the host SDL2's flags)
 CHUNKS = 128
 _prog = None
 
@@ -45,10 +47,15 @@ def _lift_chunk(args):
     return failed
 
 
+def _sdl_config(flag):
+    return subprocess.run(["sdl2-config", flag], capture_output=True, text=True, check=True).stdout.split()
+
+
 def _cc(src):
     # Chunk objects sit next to their sources; runtime objects go in GEN.
     obj = (src.parent if src.name.startswith("chunk") else GEN) / (src.stem + ".o")
-    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w",
+    sdl = _sdl_config("--cflags") if src.stem.startswith("sdl2") and src.stem != "sdl2_stdlib" else []
+    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl,
                     "-I", str(ROOT / "runtime"), "-I", str(GEN), str(src), "-o", str(obj)], check=True)
     return obj
 
@@ -82,17 +89,19 @@ def main():
              "const FnEntry FN_TABLE[] = {" + ",".join(f"{{{a:#x}u,F_{a:08x}}}" for a in starts) + "};",
              f"const int FN_COUNT = {len(starts)};"]
     (GEN / "table.c").write_text("\n".join(table))
-    srcs = chunk_srcs + [GEN / "table.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER)]
+    gen_sdl.generate()
+    launcher = [*LAUNCHER, *SDL, "sdl2_gen.c"]
+    srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL)]
     with mp.Pool(os.cpu_count()) as pool:
         objs = pool.map(_cc, srcs)
     t2 = time.time()
-    only = {"harness", "bench"} | {Path(n).stem for n in LAUNCHER}
+    only = {"harness", "bench"} | {Path(n).stem for n in launcher}
     common = [str(o) for o in objs if o.stem not in only]
     exe = ROOT / "build/harness_all"
     subprocess.run(["clang", *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
     subprocess.run(["clang", *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
-    subprocess.run(["clang", *common, *(str(GEN / (Path(n).stem + ".o")) for n in LAUNCHER),
-                    "-o", str(ROOT / "build/noitamac")], check=True)
+    subprocess.run(["clang", *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
+                    *_sdl_config("--libs"), "-o", str(ROOT / "build/noitamac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,})")

@@ -261,12 +261,14 @@ Gotchas that already bit us:
 
 ### Phase 3: first window
 
-- [ ] SDL bridge.
+- [x] SDL bridge.
   - `brew install sdl2`.
   - Write `tools/gen_sdl.py` to generate host thunks for the 66 imported SDL2 functions from the SDL2
     headers, with marshalling for guest pointers, strings and structs whose 32-bit layout differs from
     64-bit (for example `SDL_Event` members holding pointers).
   - Unit-test `SDL_GetVersion` and `SDL_GetTicks` through the thunks.
+  - SDL 2.32.10. `gen_sdl.py` (run by build_all) takes decls from the headers preprocessed as i686-msvc and layouts from clang `-fdump-record-layouts` (guest vs host); it writes `build/gen_all/sdl2_gen.c` (58 imports + GetVersion/GetTicks) and `sdl2_layout.h` (`G_<struct>_<field>`), and fails if SDL_Event's differing members change. `runtime/sdl2.c`: handles (guest heap block, 16-byte header holding the host ptr), SDL_Surface/PixelFormat/Palette mirrors with pixels always in guest memory, hand-written PollEvent/FreeSurface. The launcher links `sdl2-config --libs`. SDL_RWops is treated as opaque.
+  - `runtime/sdl_test.c` (sdltest in check.sh): 54 checks (version, ticks, strings, surfaces/blit/BMP, events, display mode). check.sh seed 6502: 97087 lifted; default 2210 / x87 149 pass, 0 fail/native_err; all tests ok.
 - [ ] Run the game until `SDL_Init` and `SDL_CreateWindow` succeed and a window appears on screen.
   - Save a screenshot with `screencapture -l` into `build/`.
   - Record how far execution got and the next blocker (probably the opengl32 LoadLibrary/GetProcAddress
