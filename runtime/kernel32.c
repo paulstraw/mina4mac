@@ -11,6 +11,7 @@
 #include "heap.h"
 #include "hle.h"
 #include "host.h"
+#include "opengl32.h"
 #include "proc.h"
 #include "sync.h"
 
@@ -269,7 +270,8 @@ HOST_STDCALL(kernel32, GetVersionExA, 4) {
 // Dynamic loading. A recompiled module (rt_register_module) is its own handle; the DLLs the runtime
 // stands in for (host implementations) get fake handles in HLE_MODULES_LO + 0x10000 * n, with nothing
 // mapped there. GetProcAddress on those returns the dll!name thunk for any name, like import binding:
-// calling one with no host implementation exits naming it. Other DLLs fail to load.
+// calling one with no host implementation exits naming it. Except GL functions the bridge doesn't have,
+// which are NULL (gl_proc_address). Other DLLs fail to load.
 enum { HLE_MODULES_LO = 0xE0000000u, ERROR_MOD_NOT_FOUND = 126, ERROR_PROC_NOT_FOUND = 127 };
 static const char *const HLE_DLLS[] = {
     "kernel32.dll", "user32.dll", "gdi32.dll", "opengl32.dll", "shell32.dll", "shlwapi.dll", "ole32.dll",
@@ -298,7 +300,8 @@ HOST_STDCALL(kernel32, GetProcAddress, 8) {
     if (sym < 0x10000) snprintf(name, sizeof name, "#%u", sym);
     else snprintf(name, sizeof name, "%s", (const char *)P(sym));
     uint32_t i = (mod - HLE_MODULES_LO) / 0x10000, f;
-    if (mod >= HLE_MODULES_LO && i < NHLE_DLLS && mod % 0x10000 == 0) f = rt_thunk(HLE_DLLS[i], name);
+    if (mod >= HLE_MODULES_LO && i < NHLE_DLLS && mod % 0x10000 == 0)
+        f = !strcmp(HLE_DLLS[i], "opengl32.dll") ? gl_proc_address(name) : rt_thunk(HLE_DLLS[i], name);
     else f = mod ? rt_export(mod, name) : 0;
     if (!f) wr32(c->fs_base + TEB_LAST_ERROR, ERROR_PROC_NOT_FOUND);
     ret_i32(c, f);

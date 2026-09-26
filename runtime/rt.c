@@ -120,6 +120,8 @@ static GuestFn find_host_fn(const char *dll, const char *name) {
     return NULL;
 }
 
+int rt_has_import(const char *dll, const char *name) { return find_host_fn(dll, name) != NULL; }
+
 void rt_register_import(const char *dll, const char *name, GuestFn fn) {
     if (NHOST_FNS == MAX_HOST_FNS) { fprintf(stderr, "too many host functions\n"); exit(2); }
     HOST_FNS[NHOST_FNS++] = (HostFn){dll, name, fn};

@@ -43,6 +43,9 @@ void rt_count_imports(const char *path);
 // or after binding.
 void rt_register_import(const char *dll, const char *name, GuestFn fn);
 
+// A host implementation of dll!name is registered.
+int rt_has_import(const char *dll, const char *name);
+
 // Thunk address for dll!name (ordinal imports are named "#<n>"), created on first request.
 uint32_t rt_thunk(const char *dll, const char *name);
 

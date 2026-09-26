@@ -1,7 +1,7 @@
 """Lift every function of the given modules (default: noita and msvcp120, which the launcher needs) into chunked C files, compile them in
 parallel, link the test harness (build/harness_all), the microbenchmark (build/bench <image.bin>) and the
-launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2, and the LuaJIT
-bridge with LuaJIT built from third_party/luajit into build/luajit/).
+launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2, the OpenGL
+bridge from tools/gen_gl.py, and the LuaJIT bridge with LuaJIT built from third_party/luajit into build/luajit/).
 
 Per-module chunks go in build/<module>/gen/; the combined decls.h, FN_TABLE and runtime objects go in
 build/gen_all/. Functions the lifter can't handle yet become stubs that report guest_unimpl.
@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
+import gen_gl  # noqa: E402
 import gen_sdl  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
@@ -109,9 +110,10 @@ def main():
              f"const int FN_COUNT = {len(starts)};"]
     (GEN / "table.c").write_text("\n".join(table))
     gen_sdl.generate()
+    gen_gl.generate()
     build_luajit()
-    launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c"]
-    srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
+    launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c", "gl_gen.c"]
+    srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c", GEN / "gl_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
     with mp.Pool(os.cpu_count()) as pool:
         objs = pool.map(_cc, srcs)
     t2 = time.time()

@@ -140,7 +140,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     `#version`s and any fixed-function use.
   - Decide between the legacy 2.1 and the core 4.1 context. Record the list of names that macOS lacks.
   - **Legacy 2.1.** `NOITAMAC_COUNT_IMPORTS=<file>` (new, rt.c) writes calls per thunk at exit; `uv run tools/glsurvey.py [file]` extracts shaders to `build/shaders/` and checks names against the SDK headers (gl.h+glext.h vs gl3.h+gl3ext.h). data.wak: header {0, count, table end, 0}, then per file {u32 offset, u32 size, u32 namelen, name}, then uncompressed data. All 23 shaders are `#version 110` (plus the included common.frag) and use gl_TexCoord/gl_FragColor/texture2D/gl_Color/gl_ModelViewMatrix/gl_MultiTexCoord; no GLSL in the exe. In a 150 s menu → New Game run, 50 of 1048 opengl32 thunks were called (+4 wgl*). Legacy lacks none of them, but core lacks 12 (client arrays, matrix stack, Push/PopAttrib, Ortho, Scalef). 461 looked-up names aren't in the legacy headers (mostly 3.x/4.x and DSA; see build/glsurvey.log). Options and fullscreen weren't exercised.
-- [ ] Generate the GL bridge (`tools/gen_gl.py` from `gl.xml`, output under `build/gen_all/`) for the
+- [x] Generate the GL bridge (`tools/gen_gl.py` from `gl.xml`, output under `build/gen_all/`) for the
   names the survey found, all `__stdcall`.
   - Pointer arguments are guest pointers (`MEM + p`). But `gl*Pointer`, `glDrawElements` indices and
     `glTex*Image` with a bound pixel-unpack buffer take buffer *offsets* when a buffer is bound, and those
@@ -150,6 +150,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - GetProcAddress returns NULL for names macOS doesn't provide, as a real driver would.
   - Replace the no-context workaround in `opengl32.c`.
   - Add a gltest step with a hidden window: clear, draw a triangle and `glReadPixels` through the thunks.
+  - `gen_gl.py` (run by build_all; gl.xml committed at `third_party/khronos/`, OpenGL-Registry @ 1cdd228e) bridges the 583 of noita.exe's 1,044 GL names that the SDK legacy headers declare → `build/gen_all/gl_gen.c` (575 generated, calls type-checked against the SDK prototypes; 8 hand-written in `runtime/opengl32.c`: GetString, ShaderSource, Map/UnmapBuffer + GetBufferPointerv shadow, MultiDrawElements*, DeleteSync; GLsync = guest handles; 40 array/element/pack/unpack pointer args become offsets while a buffer is bound). No-context no-op now lives in each thunk (`GL_CTX`, `opengl32.h`). `gl_proc_address`: GetProcAddress **and wglGetProcAddress** (the loader falls back to it on NULL, 922 calls) return NULL for the other 461. `runtime/gl_test.c` (gltest in check.sh, 43 checks, draws into an FBO); envtest links gl_gen.c. check.sh seed 4711 all ok; launcher again runs 300 s without stopping and the main menu renders (`build/gl_ingame.png`). Note the check.sh clicks miss New Game once a save exists ("Continue" shifts the menu).
 - [ ] First frame. Run until the main menu renders. Save `build/menu.png` with `tools/screenshot.sh` and
   fix blockers along the way (including C++ exceptions or `longjmp` if they're hit). Record the blockers.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
-# hosttest, envtest, loadtest, undnametest, sdltest, luatest, then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest/gltest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -77,11 +77,11 @@ else
     echo "hosttest: FAIL, see $LOG/hosttest.log"; status=1
 fi
 
-# envtest needs build/noita/image.bin, which difftest writes.
+# envtest needs build/noita/image.bin, which difftest writes, and build/gen_all/gl_gen.c (tools/gen_gl.py via build_all).
 # The launcher's runtime files (build_all.py LAUNCHER) minus main.c.
 HLE=$(sed -nE 's/^LAUNCHER = \((.*)\).*/\1/p' tools/build_all.py | tr -d '",' | tr ' ' '\n' | grep -v '^main.c$' | sed 's|^|runtime/|')
 if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/env_test.c runtime/rt.c -framework OpenGL \
-        $HLE -o build/envtest >"$LOG/envtest.log" 2>&1 \
+        $HLE build/gen_all/gl_gen.c -o build/envtest >"$LOG/envtest.log" 2>&1 \
         && build/envtest build/noita/image.bin "${NOITA_DIR:-build/game}/msvcp120.dll" >>"$LOG/envtest.log" 2>&1; then
     echo "envtest: ok $(grep -c ' ok ' "$LOG/envtest.log") checks"
 else
@@ -117,6 +117,15 @@ if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -fexce
     echo "luatest: ok $(grep -c ' ok ' "$LOG/luatest.log") checks; $(grep '^jit: [0-9]' "$LOG/luatest.log")"
 else
     echo "luatest: FAIL, see $LOG/luatest.log"; status=1
+fi
+
+# gltest needs build/gen_all/gl_gen.c; it draws into a framebuffer object of a hidden window's GL context.
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime $(sdl2-config --cflags) \
+        runtime/gl_test.c runtime/opengl32.c build/gen_all/gl_gen.c runtime/rt.c runtime/heap.c runtime/hle.c \
+        $(sdl2-config --libs) -framework OpenGL -o build/gltest >"$LOG/gltest.log" 2>&1 && build/gltest >>"$LOG/gltest.log" 2>&1; then
+    echo "gltest: ok $(grep -c ' ok ' "$LOG/gltest.log") checks"
+else
+    echo "gltest: FAIL, see $LOG/gltest.log"; status=1
 fi
 
 # The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.
