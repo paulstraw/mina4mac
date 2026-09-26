@@ -1,4 +1,4 @@
-"""Static recompiler: x86-32 functions from noita.exe -> C.
+"""Static recompiler: x86-32 functions from one module (noita.exe, or a DLL at its chosen base) -> C.
 
 Each guest function becomes `void F_<addr>(CPU *c)`. General-purpose registers and flags live in
 C locals for the body of the function and are synced to `c` around calls and at exit, so clang can
@@ -13,9 +13,8 @@ import capstone
 from capstone import x86
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pe import load  # noqa: E402
+from pe import ROOT, build_dir, load  # noqa: E402
 
-ROOT = Path(__file__).parent.parent
 GPR = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
 R8 = {"al": ("eax", 0), "cl": ("ecx", 0), "dl": ("edx", 0), "bl": ("ebx", 0),
       "ah": ("eax", 8), "ch": ("ecx", 8), "dh": ("edx", 8), "bh": ("ebx", 8)}
@@ -50,9 +49,10 @@ class Unsupported(Exception):
 class Program:
     """Whole-image knowledge the lifter needs: decoded instructions, function starts, tables."""
 
-    def __init__(self):
-        self.img = load()
-        d = pickle.load(open(ROOT / "build/discover.pkl", "rb"))
+    def __init__(self, module="noita"):
+        self.module = module
+        self.img = load(module)
+        d = pickle.load(open(build_dir(module) / "discover.pkl", "rb"))
         self.insns = d["insns"]
         self.jump_tables = d["jump_tables"]
         self.all_starts = set(d["calls"])

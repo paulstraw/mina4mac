@@ -1,9 +1,13 @@
-"""Recursive-descent code discovery over noita.exe.
+"""Recursive-descent code discovery over one module (default noita.exe).
 
-Seeds: the entry point, every relocation whose target lies in .text (function pointers, vtables,
-callbacks, jump-table entries), and every direct call target found along the way.
-Output: a pickle of decoded instructions + function starts + jump tables, and a coverage report.
+Seeds: the entry point, exports in .text, every relocation whose target lies in .text (function
+pointers, vtables, callbacks, jump-table entries), and every direct call target found along the way.
+Output: build/<module>/discover.pkl (decoded instructions + function starts + jump tables), and a
+coverage report.
+
+  uv run tools/discover.py [module]
 """
+import argparse
 import collections
 import pickle
 import sys
@@ -14,13 +18,14 @@ import capstone
 from capstone import x86
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pe import load  # noqa: E402
-
-OUT = Path(__file__).parent.parent / "build"
+from pe import MODULES, build_dir, load  # noqa: E402
 
 
 def main():
-    img = load()
+    ap = argparse.ArgumentParser()
+    ap.add_argument("module", nargs="?", default="noita", choices=MODULES)
+    args = ap.parse_args()
+    img = load(args.module)
     t_lo, t_hi = img.section(".text")
     text = img.read(t_lo, t_hi - t_lo)
 
@@ -45,8 +50,10 @@ def main():
 
     work = [img.entry]
     work += [v for s, v in text_ptrs.items() if not (t_lo <= s < t_hi)]  # pointers from data sections
+    work += [v for v in img.exports if t_lo <= v < t_hi]
     call_targets.add(img.entry)
     call_targets.update(v for s, v in text_ptrs.items() if not (t_lo <= s < t_hi))
+    call_targets.update(v for v in img.exports if t_lo <= v < t_hi)
     seen_starts = set()
 
     def decode_from(addr):
@@ -125,7 +132,8 @@ def main():
     fs_use = sum(1 for _, m, o in insns.values() if "fs:" in o)
     x87 = sum(c for m, c in mn.items() if m.startswith("f") and m not in ("fs",))
 
-    OUT.mkdir(exist_ok=True)
+    OUT = build_dir(args.module)
+    OUT.mkdir(parents=True, exist_ok=True)
     with open(OUT / "discover.pkl", "wb") as f:
         pickle.dump(dict(insns=insns, calls=sorted(call_targets), jump_tables=jump_tables,
                          unresolved=unresolved_indirect_jmp, import_calls=import_calls), f)

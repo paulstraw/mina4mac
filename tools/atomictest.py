@@ -12,6 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT  # noqa: E402
+from pe import build_dir  # noqa: E402
 
 BUILD = ROOT / "build"
 # name -> instance in noita.exe; runtime/atomic_test.c relies on these operand registers.
@@ -46,7 +47,7 @@ def main():
         out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;")
         out.extend(lf.lines)
         out.append("}")
-    gen = BUILD / "gen"
+    gen = build_dir("noita") / "testgen"
     gen.mkdir(parents=True, exist_ok=True)
     (gen / "atomictest.c").write_text("\n".join(out) + "\n")
     exe = BUILD / "atomictest"

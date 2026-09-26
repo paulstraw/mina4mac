@@ -18,7 +18,7 @@ import unicorn as uc
 from unicorn import x86_const as X
 
 sys.path.insert(0, str(Path(__file__).parent))
-from difftest import (BUILD, GEN, NAMES, SCRATCH_LO, SCRATCH_SZ, SENTINEL, STACK_LO, STACK_SZ, TEB,  # noqa: E402
+from difftest import (BUILD, GEN, MOD, NAMES, SCRATCH_LO, SCRATCH_SZ, SENTINEL, STACK_LO, STACK_SZ, TEB,  # noqa: E402
                       Ref, rand_block, rand_value, run_native)
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 
@@ -99,7 +99,7 @@ def main():
     ref.mu.mem_map(CODE, 0x10000)
     for t, a, _ in tests:
         ref.mu.mem_write(t, prog.img.read(a, prog.insns[a][0]) + TAIL)
-    (BUILD / "image.bin").write_bytes(ref.image)
+    (MOD / "image.bin").write_bytes(ref.image)
     d_lo, d_hi = prog.img.section(".data")
     data_region = (d_lo, bytes(ref.image[d_lo - prog.img.base:d_hi - prog.img.base]))
     tmp = BUILD / "tmp"

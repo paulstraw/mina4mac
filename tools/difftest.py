@@ -16,9 +16,11 @@ from unicorn import x86_const as X
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT  # noqa: E402
+from pe import build_dir  # noqa: E402
 
 BUILD = ROOT / "build"
-GEN = BUILD / "gen"
+MOD = build_dir("noita")  # difftest only covers noita.exe for now
+GEN = MOD / "testgen"
 STACK_LO, STACK_SZ = 0x08000000, 0x10000
 SCRATCH_LO, SCRATCH_SZ = 0x10000000, 0x40000
 TEB = 0x7FFD0000
@@ -166,7 +168,7 @@ def run_native(exe, func, regs, xmm, regions, data_region, tmp):
         for a, d in all_regions:
             f.write(struct.pack("<II", a, len(d)))
             f.write(d)
-    p = subprocess.run([str(exe), str(snap), str(res), str(BUILD / "image.bin"), "400000"], capture_output=True, timeout=10)
+    p = subprocess.run([str(exe), str(snap), str(res), str(MOD / "image.bin"), "400000"], capture_output=True, timeout=10)
     if p.returncode != 0:
         return None, p.stderr.decode().strip() or f"exit {p.returncode}"
     b = res.read_bytes()
@@ -191,7 +193,7 @@ def main():
     args = ap.parse_args()
     rng = random.Random(args.seed)
     prog = Program()
-    ok = pickle.load(open(BUILD / "survey.pkl", "rb"))["ok"]
+    ok = pickle.load(open(MOD / "survey.pkl", "rb"))["ok"]
     if args.only:
         cands, total = [(args.only, closure(ok, [args.only]))], 1
     else:
@@ -208,7 +210,7 @@ def main():
     exe = BUILD / "harness_all" if args.all else build_native(prog, funcs)
     ref = Ref(prog)
     assert prog.img.base == 0x400000
-    (BUILD / "image.bin").write_bytes(ref.image)
+    (MOD / "image.bin").write_bytes(ref.image)
     tmp = BUILD / "tmp"
     tmp.mkdir(exist_ok=True)
     d_lo, d_hi = prog.img.section(".data")
@@ -265,7 +267,7 @@ def main():
             continue
         seen.add(a)
         print(f"  {a:#x} trial {t}: {why}")
-    pickle.dump(failures, open(BUILD / "difftest_failures.pkl", "wb"))
+    pickle.dump(failures, open(MOD / "difftest_failures.pkl", "wb"))
 
 
 if __name__ == "__main__":

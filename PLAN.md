@@ -190,10 +190,12 @@ Gotchas that already bit us:
 
 ### Phase 1: multiple modules
 
-- [ ] Generalise `pe.py`/`discover.py`/`lift.py`/`build_all.py` from "noita.exe" to a module list. Each
+- [x] Generalise `pe.py`/`discover.py`/`lift.py`/`build_all.py` from "noita.exe" to a module list. Each
   module has a file, a chosen load base (non-overlapping, recorded in one place) and relocations applied
   when the base differs from its preferred one. Module-specific outputs go under `build/<module>/`.
   noita.exe results must be unchanged: the same survey numbers and a clean `tools/check.sh`.
+  - `pe.MODULES` holds name → (file, base): noita 0x400000, DLLs packed from 0x18000000 (msvcp120 0x18000000, …, SDL2 0x19100000), clear of heap/thunks/difftest areas. `load(module)` rebases via relocs; `Image.exports` added and discover seeds exports. `discover.py`/`survey.py [module]`, `Program(module)`, `build_all.py [module ...]` (chunks in `build/<m>/gen/`, combined decls/FN_TABLE in `build/gen_all/`). pkl files, image.bin and test scratch C (`testgen/`) now live in `build/noita/`.
+  - noita discover.pkl is byte-identical to before. check.sh seed 5150: 97087/97087 lifted, 0 stubs; default 2247 / x87 157 pass, 0 fail/native_err; atomictest ok; insntest 6830 pass; bench unchanged (12.7 ns rng).
 - [ ] Discover and survey `msvcp120.dll` at a chosen base. Record the lift coverage and the list of what
   it imports (dll!name counts) in the note.
   - Decision rule: if at least 99.5% of its functions lift, it is recompiled like the exe (the plan
