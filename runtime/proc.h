@@ -19,6 +19,7 @@ enum {
     TEB_EXCEPTION_LIST = 0x00, TEB_STACK_BASE = 0x04, TEB_STACK_LIMIT = 0x08, TEB_SELF = 0x18,
     TEB_PID = 0x20, TEB_TID = 0x24, TEB_TLS_POINTER = 0x2c, TEB_PEB = 0x30, TEB_LAST_ERROR = 0x34,
     TEB_TLS_SLOTS = 0xe10,  // TlsAlloc slots 0..63
+    TEB_CRT_ERRNO = 0xff0,  // HLE msvcr120's per-thread errno (a spare TEB field)
 };
 // PEB fields.
 enum { PEB_BEING_DEBUGGED = 0x02, PEB_IMAGE_BASE = 0x08, PEB_PROCESS_HEAP = 0x18,

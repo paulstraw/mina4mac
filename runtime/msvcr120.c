@@ -5,9 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "heap.h"
+#include "hle.h"
 #include "host.h"
+#include "kernel32.h"
+#include "proc.h"
+#include "undname.h"
 
 HOST_CDECL(msvcr120, malloc) { ret_i32(c, heap_alloc(ARG(0))); }
 HOST_CDECL(msvcr120, _malloc_crt) { ret_i32(c, heap_alloc(ARG(0))); }
@@ -42,12 +47,6 @@ HOST(msvcr120, concrt_free, "?Free@Concurrency@@YAXPAX@Z", 0) { heap_free(ARG(0)
 // holds the thunk address, which guest code dereferences as the variable's address.
 #define MSVCR "MSVCR120.dll"
 static uint32_t ARGC, ARGV, ENVP;
-
-static uint32_t guest_strdup(const char *s) {
-    uint32_t p = heap_alloc(strlen(s) + 1);
-    strcpy((char *)P(p), s);
-    return p;
-}
 
 void crt_init(int argc, char **argv) {
     // argv[0] is this launcher; the game sees itself as noita.exe.
@@ -181,3 +180,75 @@ HOST_CDECL(msvcr120, _amsg_exit) {  // fatal CRT runtime error _RT_<n>
     fprintf(stderr, "guest runtime error R60%02u\n", ARG(0));
     _Exit(255);
 }
+
+// __dllonexit(func, &begin, &end): append func to a DLL's own exit table, a guest heap block whose
+// (encoded) bounds the DLL keeps; its DllMain runs the table on DLL_PROCESS_DETACH.
+HOST_CDECL(msvcr120, __dllonexit) {
+    uint32_t f = ARG(0), pbegin = ARG(1), pend = ARG(2);
+    pthread_mutex_lock(&ONEXIT_LOCK);
+    uint32_t begin = rd32(pbegin), end = rd32(pend), used = end - begin;
+    if (!begin || used + 4 > heap_size(begin)) {  // grow by doubling (at least 32 entries)
+        uint32_t size = used < 64 ? 128 : 2 * used, nb = heap_realloc(begin, size);
+        if (!nb) f = 0;
+        else begin = nb, end = nb + used;
+    }
+    if (f) {
+        wr32(end, f);
+        wr32(pbegin, begin);
+        wr32(pend, end + 4);
+    }
+    pthread_mutex_unlock(&ONEXIT_LOCK);
+    ret_i32(c, f);
+}
+
+// (CRITICAL_SECTION *, spin count, flags): the CRT's wrapper for InitializeCriticalSectionEx.
+HOST_CDECL(msvcr120, __crtInitializeCriticalSectionEx) { cs_init(ARG(0)); ret_i32(c, 1); }
+
+// type_info (thiscall: `this` in ecx): { vftable, cached undecorated name, decorated name ".?AV..." }.
+HOST(msvcr120, type_info_name, "?name@type_info@@QBEPBDPAU__type_info_node@@@Z", 4) {
+    uint32_t ti = c->ecx, cached = rd32(ti + 4);
+    if (!cached) {  // undecorated once, then kept for the life of the process
+        const char *dec = (const char *)P(ti + 8);
+        char *u = undname_type(dec);
+        uint32_t g = guest_strdup(u ? u : dec + 1);
+        free(u);
+        uint32_t zero = 0;
+        cached = __atomic_compare_exchange_n((uint32_t *)P(ti + 4), &zero, g, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)
+                     ? g : (heap_free(g), zero);
+    }
+    ret_i32(c, cached);
+}
+HOST(msvcr120, type_info_eq, "??8type_info@@QBE_NABV0@@Z", 4) {
+    ret_i32(c, !strcmp((char *)P(c->ecx + 9), (char *)P(ARG(0) + 9)));
+}
+HOST(msvcr120, type_info_ne, "??9type_info@@QBE_NABV0@@Z", 4) {
+    ret_i32(c, !!strcmp((char *)P(c->ecx + 9), (char *)P(ARG(0) + 9)));
+}
+HOST(msvcr120, type_info_dtor, "??1type_info@@UAE@XZ", 0) {}  // cached names are never freed
+HOST_CDECL(msvcr120, __clean_type_info_names_internal) {}
+
+HOST_CDECL(msvcr120, _errno) { ret_i32(c, c->fs_base + TEB_CRT_ERRNO); }
+
+// Time.
+HOST_CDECL(msvcr120, _time64) {
+    int64_t t = time(NULL);
+    if (ARG(0)) wr64(ARG(0), (uint64_t)t);
+    ret_i64(c, (uint64_t)t);
+}
+static void wr_tm(uint32_t g, const struct tm *t) {  // struct tm: nine ints, the same on both sides
+    const int v[9] = {t->tm_sec, t->tm_min, t->tm_hour, t->tm_mday, t->tm_mon, t->tm_year,
+                      t->tm_wday, t->tm_yday, t->tm_isdst};
+    for (int i = 0; i < 9; i++) wr32(g + 4 * i, (uint32_t)v[i]);
+}
+static _Thread_local uint32_t TM;  // the per-thread buffer localtime returns
+HOST_CDECL(msvcr120, _localtime64) {
+    time_t t = (time_t)(int64_t)rd64(ARG(0));
+    struct tm tm;
+    if (!localtime_r(&t, &tm)) return ret_i32(c, 0);
+    if (!TM) TM = heap_calloc(1, 36);
+    wr_tm(TM, &tm);
+    ret_i32(c, TM);
+}
+
+// Exceptions: none are ever in flight (guest C++ exceptions aren't supported yet).
+HOST_CDECL(msvcr120, __uncaught_exception) { ret_i32(c, 0); }

@@ -1,4 +1,4 @@
-"""Lift every function of the given modules (default: noita) into chunked C files, compile them in
+"""Lift every function of the given modules (default: noita and msvcp120, which the launcher needs) into chunked C files, compile them in
 parallel, link the test harness (build/harness_all), the microbenchmark (build/bench <image.bin>) and the
 launcher (build/noitamac).
 
@@ -20,7 +20,7 @@ from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
-LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "kernel32.c")  # runtime files only the launcher links
+LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c")  # runtime files only the launcher links
 CHUNKS = 128
 _prog = None
 
@@ -56,7 +56,7 @@ def _cc(src):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("modules", nargs="*", choices=MODULES)
-    modules = ap.parse_args().modules or ["noita"]
+    modules = ap.parse_args().modules or ["noita", "msvcp120"]
     GEN.mkdir(parents=True, exist_ok=True)
     starts_by_mod = {}
     for m in modules:

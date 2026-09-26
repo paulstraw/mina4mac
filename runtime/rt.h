@@ -42,6 +42,14 @@ void rt_register_import(const char *dll, const char *name, GuestFn fn);
 // Thunk address for dll!name (ordinal imports are named "#<n>"), created on first request.
 uint32_t rt_thunk(const char *dll, const char *name);
 
-// Write a thunk address into every IAT slot of the PE image mapped at guest `base` (headers included).
-// Returns the number of slots bound.
+// Declare that dll (matched case-insensitively) is a recompiled guest module mapped at guest `base`
+// (headers included). rt_bind_imports then binds imports from it to its exports instead of thunks.
+void rt_register_module(const char *dll, uint32_t base);
+
+// Guest address of export `name` ("#<n>" for an ordinal) of the PE image mapped at `base`, or 0.
+uint32_t rt_export(uint32_t base, const char *name);
+
+// Bind every IAT slot of the PE image mapped at guest `base` (headers included): to the export's address
+// if its dll is a registered module (exits if the export is missing), otherwise to a host thunk. Returns
+// the number of slots bound.
 int rt_bind_imports(uint32_t base);

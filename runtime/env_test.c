@@ -1,17 +1,21 @@
 // Guest process environment test (built and run by tools/check.sh): the guest heap directly, from many
 // host threads, and through the MSVCR120/KERNEL32 imports; then the PEB, main-thread TEB, stack and
 // static TLS set up for noita.exe; then the CRT startup imports (command line, initializer tables,
-// exit handlers, _controlfp_s) and the KERNEL32 identity/time imports it calls.
-//   env_test <noita image.bin>
+// exit handlers, _controlfp_s) and the KERNEL32 identity/time imports it calls; then the imports the C++
+// static initializers use (memory/string/locale/stdio/printf/math/type_info/ConcRT/critical sections/
+// __dllonexit/paths) and binding the exe's MSVCP120 imports to the recompiled msvcp120.dll's exports.
+//   env_test <noita image.bin> <msvcp120.dll>
 #include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "heap.h"
+#include "hle.h"
 #include "host.h"
 #include "msvcr120.h"
 #include "proc.h"
@@ -90,8 +94,227 @@ static int all(uint32_t p, uint8_t v, uint32_t n) {
     return 1;
 }
 
+static uint32_t gs(const char *s) { return guest_strdup(s); }
+static uint32_t gws(const char *s) {
+    uint32_t p = heap_alloc(2 * (strlen(s) + 1));
+    utf8_to_utf16(s, p, strlen(s) + 1);
+    return p;
+}
+static int gstreq(uint32_t p, const char *s) { return p && !strcmp((char *)P(p), s); }
+
+// A thiscall method: `this` in ecx.
+static uint32_t method(CPU *c, uint32_t this, const char *name, int n, const uint32_t *args) {
+    c->ecx = this;
+    call(c, "MSVCR120.dll", name, n, args);
+    return c->eax;
+}
+
+#define ST_OF(c, i) (c).st[((c).st_top + (i)) & 7]
+
+// Try to take a lock from another host thread (as guest thread c2), releasing it again on success.
+typedef struct { CPU *c; uint32_t obj; int concrt; uint32_t r; } TryArgs;
+static void *try_other_thread(void *p) {
+    TryArgs *a = p;
+    if (a->concrt) {
+        a->r = method(a->c, a->obj, "?try_lock@critical_section@Concurrency@@QAE_NXZ", 0, NULL);
+        if (a->r) method(a->c, a->obj, "?unlock@critical_section@Concurrency@@QAEXXZ", 0, NULL);
+    } else {
+        call(a->c, "KERNEL32.dll", "TryEnterCriticalSection", 1, &a->obj);
+        a->r = a->c->eax;
+        if (a->r) call(a->c, "KERNEL32.dll", "LeaveCriticalSection", 1, &a->obj);
+    }
+    return NULL;
+}
+static uint32_t on_other_thread(CPU *c2, uint32_t obj, int concrt) {
+    TryArgs a = {c2, obj, concrt, 0};
+    pthread_t t;
+    pthread_create(&t, NULL, try_other_thread, &a);
+    pthread_join(t, NULL);
+    return a.r;
+}
+
+static void initializer_imports(CPU *cp, CPU *c2) {
+    CPU c = *cp;  // the CRT/K32 macros use a local `c`
+    // Memory, strings, conversions.
+    uint32_t s1 = gs("hello world"), buf = heap_calloc(1, 256), endp = heap_alloc(4);
+    CHECK("memcpy returns dest", CRT("memcpy", buf, s1, 12), buf);
+    CHECK("strlen/strcmp", CRT("strlen", buf) * 10 + (CRT("strcmp", buf, s1) == 0), 111);
+    CHECK("memchr", CRT("memchr", s1, 'w', 11), s1 + 6);
+    uint32_t num = gs("  -123abc");
+    CHECK("strtol value", CRT("strtol", num, endp, 10), (uint32_t)-123);
+    CHECK("strtol endptr", rd32(endp), num + 6);
+    CHECK("strtoul hex", CRT("strtoul", gs("0xffffffff"), 0, 16), 0xffffffff);
+    int depth = c.st_top;
+    CRT("strtod", gs("2.5e3"), 0);
+    CHECK("strtod in st0", c.st_top == ((depth - 1) & 7) && ST_OF(c, 0) == 2500.0, 1);
+    c.st_top = depth;
+    CRT("srand", 1);
+    uint32_t r1 = CRT("rand"), r2 = CRT("rand"), r3 = CRT("rand");
+    CHECK("rand: MSVC LCG sequence", r1 == 41 && r2 == 18467 && r3 == 6334, 1);
+    CHECK("strcpy_s too small", CRT("strcpy_s", buf, 4, s1) == 34 && rd8(buf) == 0, 1);
+
+    // Locale.
+    CHECK("setlocale query = C", gstreq(CRT("setlocale", 0, 0), "C"), 1);
+    CHECK("setlocale other fails", CRT("setlocale", 0, gs("German")), 0);
+    CHECK("localeconv decimal point", gstreq(rd32(CRT("localeconv")), "."), 1);
+    uint32_t pct = CRT("__pctype_func");
+    CHECK("_pctype a/7/space/EOF", rd16(pct + 2 * 'a') == 0x182 && rd16(pct + 2 * '7') == 0x84
+          && rd16(pct + 2 * ' ') == 0x48 && rd16(pct - 2) == 0, 1);
+    CHECK("isdigit/isspace/toupper", (CRT("isdigit", '5') != 0) + (CRT("isspace", 'x') != 0) * 2
+          + (CRT("toupper", 'q') == 'Q') * 4 + (CRT("tolower", 0xc4) == 0xc4) * 8, 13);
+
+    // printf formatting (guest varargs; doubles and __int64 take two slots).
+    double pi = 3.14159265, big = 1500.0, huge = 1e20;
+    int64_t i64 = -5000000000ll;
+    uint32_t w = gws("wide"), ab = gs("ab"), fmtp = gs("%d|%5s|%-4x|%08.3f|%e|%I64d|%p|%S|%c|%%|%g|%s");
+    uint32_t args[] = {buf, 256, fmtp, (uint32_t)-12, ab, 0xff, 0, 0, 0, 0, 0, 0, 0xabcd, w, 'Z', 0, 0, 0};
+    memcpy(&args[6], &pi, 8);
+    memcpy(&args[8], &big, 8);
+    memcpy(&args[10], &i64, 8);
+    memcpy(&args[15], &huge, 8);
+    uint32_t n = (call(&c, "MSVCR120.dll", "sprintf_s", 18, args), c.eax);
+    const char *want = "-12|   ab|ff  |0003.142|1.500000e+003|-5000000000|0000ABCD|wide|Z|%|1e+020|(null)";
+    CHECK("sprintf_s MSVC format", strcmp((char *)P(buf), want), 0);
+    if (strcmp((char *)P(buf), want)) printf("  got \"%s\"\n", (char *)P(buf));
+    CHECK("sprintf_s length", n, strlen(want));
+    wr32(endp, s1);  // a va_list holding one char *
+    CHECK("_vsnprintf truncates: -1", CRT("_vsnprintf", buf, 4, gs("%s"), endp), 0xffffffff);
+    CHECK("_vsnprintf truncated bytes", memcmp(P(buf), "hell", 4), 0);
+    CHECK("sprintf_s overflow", CRT("sprintf_s", buf, 4, gs("%s"), s1) == 0xffffffff && rd8(buf) == 0, 1);
+
+    // stdio: a file round trip through a backslash path, and errno for a missing file.
+    uint32_t name = gs("build\\tmp\\envtest.txt"), f = CRT("fopen", name, gs("wt"));
+    CHECK("fopen write", f != 0, 1);
+    CRT("fputs", gs("line1\n"), f);
+    CRT("fprintf", f, gs("%d-%s"), 42, ab);
+    CRT("fclose", f);
+    f = CRT("_fsopen", name, gs("rb"), 0x40);
+    uint32_t got = heap_calloc(1, 64);
+    for (int i = 0; i < 11; i++) wr8(got + i, (uint8_t)CRT("fgetc", f));
+    CHECK("file contents", strcmp((char *)P(got), "line1\n42-ab"), 0);
+    CHECK("fgetc at EOF", CRT("fgetc", f), 0xffffffff);
+    uint32_t pos = heap_alloc(8);
+    CRT("fgetpos", f, pos);
+    CHECK("fgetpos", rd64(pos), 11);
+    CRT("fseek", f, 2, 0);
+    CHECK("fseek + fgetwc (binary: 2 bytes)", CRT("fgetwc", f), 'e' << 8 | 'n');
+    CRT("fclose", f);
+    CHECK("fopen missing: NULL", CRT("fopen", gs("no\\such\\file"), gs("r")), 0);
+    CHECK("... errno ENOENT", rd32(CRT("_errno")), 2);
+    uint32_t iob = CRT("__iob_func");
+    CHECK("__iob_func: stdout/stderr work", CRT("fflush", iob + 32) == 0 && CRT("fflush", iob + 64) == 0, 1);
+
+    // Math.
+    depth = c.st_top;
+    st_push(&c, 7.5);
+    st_push(&c, 2.0);
+    CRT("_CIfmod");
+    CHECK("_CIfmod(st1, st0)", c.st_top == ((depth - 1) & 7) && ST_OF(c, 0) == 1.5, 1);
+    c.st_top = depth;
+    c.xmm[0].f64[0] = 2, c.xmm[1].f64[0] = 10;
+    CRT("_libm_sse2_pow_precise");
+    CHECK("_libm_sse2_pow_precise", c.xmm[0].f64[0] == 1024.0, 1);
+    uint32_t d = heap_alloc(8);
+    wrf64(d, 1.0 / 0.0);
+    CHECK("_dtest inf", CRT("_dtest", d), 1);
+
+    // Time.
+    uint32_t tt = heap_alloc(8);
+    uint64_t now = (CRT("_time64", tt), (uint64_t)c.edx << 32 | c.eax);
+    CHECK("_time64 after 2020, stored", now > 1577836800 && rd64(tt) == now, 1);
+    uint32_t tm = CRT("_localtime64", tt);
+    CHECK("_localtime64 year", rd32(tm + 20) >= 120 && rd32(tm + 16) < 12, 1);
+
+    // type_info: { vftable, cached name, ".?AV..." }.
+    uint32_t ti = heap_calloc(1, 64), ti2 = heap_calloc(1, 64);
+    strcpy((char *)P(ti + 8), ".?AV?$vector@HV?$allocator@H@std@@@std@@");
+    strcpy((char *)P(ti2 + 8), ".?AUEaseIn@Back@easing@ceng@@");
+    uint32_t nm = method(&c, ti, "?name@type_info@@QBEPBDPAU__type_info_node@@@Z", 1, (uint32_t[]){0});
+    CHECK("type_info::name", gstreq(nm, "class std::vector<int,class std::allocator<int> >"), 1);
+    CHECK("type_info::name cached", method(&c, ti, "?name@type_info@@QBEPBDPAU__type_info_node@@@Z", 1, (uint32_t[]){0}), nm);
+    CHECK("type_info::name struct", gstreq(method(&c, ti2, "?name@type_info@@QBEPBDPAU__type_info_node@@@Z", 1,
+                                                  (uint32_t[]){0}), "struct ceng::easing::Back::EaseIn"), 1);
+    CHECK("type_info ==/!=", method(&c, ti, "??8type_info@@QBE_NABV0@@Z", 1, (uint32_t[]){ti}) * 2
+          + method(&c, ti, "??9type_info@@QBE_NABV0@@Z", 1, (uint32_t[]){ti2}), 3);
+
+    // KERNEL32 critical sections: recursive, owner/recursion fields, exclusive across threads.
+    uint32_t cs = heap_calloc(1, 24);
+    K32("InitializeCriticalSection", cs);
+    K32("EnterCriticalSection", cs);
+    K32("EnterCriticalSection", cs);
+    CHECK("CS owner + recursion", rd32(cs + 12) == GUEST_PID + 4 && rd32(cs + 8) == 2, 1);
+    CHECK("CS TryEnter from other thread", on_other_thread(c2, cs, 0), 0);
+    K32("LeaveCriticalSection", cs);
+    K32("LeaveCriticalSection", cs);
+    CHECK("CS released", rd32(cs + 12) == 0 && on_other_thread(c2, cs, 0) == 1, 1);
+    K32("DeleteCriticalSection", cs);
+    uint32_t cs2 = heap_calloc(1, 24);
+    CRT("__crtInitializeCriticalSectionEx", cs2, 4000, 0);
+    CHECK("__crtInitializeCriticalSectionEx", K32("TryEnterCriticalSection", cs2), 1);
+
+    // ConcRT: critical_section, event.
+    uint32_t ccs = heap_calloc(1, 64), ev = heap_calloc(1, 64);
+    method(&c, ccs, "??0critical_section@Concurrency@@QAE@XZ", 0, NULL);
+    method(&c, ccs, "?lock@critical_section@Concurrency@@QAEXXZ", 0, NULL);
+    CHECK("critical_section held elsewhere", on_other_thread(c2, ccs, 1), 0);
+    method(&c, ccs, "?unlock@critical_section@Concurrency@@QAEXXZ", 0, NULL);
+    CHECK("critical_section free", on_other_thread(c2, ccs, 1), 1);
+    method(&c, ev, "??0event@Concurrency@@QAE@XZ", 0, NULL);
+    CHECK("event wait(0) unset: timeout", method(&c, ev, "?wait@event@Concurrency@@QAEII@Z", 1, (uint32_t[]){0}), 0xffffffff);
+    method(&c, ev, "?set@event@Concurrency@@QAEXXZ", 0, NULL);
+    CHECK("event wait after set", method(&c, ev, "?wait@event@Concurrency@@QAEII@Z", 1, (uint32_t[]){0}), 0);
+
+    // __dllonexit: a DLL's own table grows and keeps order.
+    uint32_t pb = heap_calloc(1, 4), pe = heap_calloc(1, 4);
+    int order = 1;
+    for (uint32_t i = 1; i <= 40; i++) CRT("__dllonexit", 0x1000 * i, pb, pe);
+    for (uint32_t i = 0; i < 40; i++) order &= rd32(rd32(pb) + 4 * i) == 0x1000 * (i + 1);
+    CHECK("__dllonexit: 40 entries in order", order && rd32(pe) - rd32(pb) == 160, 1);
+
+    // Paths.
+    uint32_t path = heap_calloc(260, 2);
+    utf8_to_utf16("Z:\\a\\b", path, 260);
+    call(&c, "SHLWAPI.dll", "PathAppendW", 2, (uint32_t[]){path, gws("\\..\\c\\.\\d.txt")});
+    char out[600];
+    utf16_to_utf8(path, out, sizeof out);
+    CHECK("PathAppendW + canonicalise", c.eax == 1 && !strcmp(out, "Z:\\a\\c\\d.txt"), 1);
+    CHECK("GetCurrentDirectoryW too small", K32("GetCurrentDirectoryW", 2, path) > 3, 1);
+    uint32_t len = K32("GetCurrentDirectoryW", 260, path);
+    utf16_to_utf8(path, out, sizeof out);
+    char cwd[600], wcwd[600];
+    CHECK("GetCurrentDirectoryW = Z: + cwd", len == strlen(out) && win_path(getcwd(cwd, sizeof cwd), wcwd, sizeof wcwd)
+          && !strcmp(out, wcwd), 1);
+    *cp = c;
+}
+
+// Binding the exe's MSVCP120 imports to the recompiled DLL's exports (by name, and by ordinal).
+static void msvcp120_binding(const char *dll) {
+    enum { MSVCP_BASE = 0x18000000 };
+    uint32_t entry = rt_map_pe(dll, MSVCP_BASE);
+    CHECK("msvcp120 entry", entry, 0x1803b707);
+    rt_register_module("MSVCP120.dll", MSVCP_BASE);
+    uint32_t xlen = rt_export(MSVCP_BASE, "?_Xlength_error@std@@YAXPBD@Z");
+    CHECK("export by name", xlen > MSVCP_BASE && xlen < MSVCP_BASE + 0x71000, 1);
+    uint32_t exp = MSVCP_BASE + rd32(MSVCP_BASE + rd32(MSVCP_BASE + 0x3c) + 24 + 96);
+    uint32_t ord = rd32(exp + 16), k = 0;  // find the export's ordinal
+    char ordname[16];
+    for (uint32_t i = 0; i < rd32(exp + 20); i++)
+        if (MSVCP_BASE + rd32(MSVCP_BASE + rd32(exp + 28) + 4 * i) == xlen) k = i;
+    snprintf(ordname, sizeof ordname, "#%u", ord + k);
+    CHECK("export by ordinal", rt_export(MSVCP_BASE, ordname), xlen);
+    CHECK("missing export", rt_export(MSVCP_BASE, "nope"), 0);
+    rt_bind_imports(EXE_BASE);
+    uint32_t nt = EXE_BASE + rd32(EXE_BASE + 0x3c), dir = rd32(nt + 24 + 96 + 8), bound = 0, right = 0;
+    for (uint32_t d = EXE_BASE + dir; rd32(d + 12); d += 20) {
+        if (strcasecmp((char *)P(EXE_BASE + rd32(d + 12)), "MSVCP120.dll")) continue;
+        for (uint32_t i = 0, e; (e = rd32(EXE_BASE + rd32(d) + 4 * i)); i++, bound++)
+            right += rd32(EXE_BASE + rd32(d + 16) + 4 * i) == rt_export(MSVCP_BASE, (char *)P(EXE_BASE + e + 2));
+    }
+    CHECK("MSVCP120 slots -> exports", bound == 141 && right == 141, 1);
+}
+
 int main(int argc, char **argv) {
-    if (argc != 2) { fprintf(stderr, "usage: env_test <noita image.bin>\n"); return 2; }
+    if (argc != 3) { fprintf(stderr, "usage: env_test <noita image.bin> <msvcp120.dll>\n"); return 2; }
     rt_init();
 
     // Heap, directly.
@@ -245,5 +468,7 @@ int main(int argc, char **argv) {
     K32("QueryPerformanceCounter", t); usleep(2000); K32("QueryPerformanceCounter", t + 8);
     uint64_t dt = (rd64(t + 8) - rd64(t)) * 1000 / freq;  // ms
     CHECK("QueryPerformanceCounter ~2 ms", dt >= 2 && dt < 100, 1);
+    initializer_imports(&c, &c2);
+    msvcp120_binding(argv[2]);
     return fails != 0;
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
-# hosttest, envtest, loadtest, then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest/undnametest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -72,9 +72,11 @@ else
 fi
 
 # envtest needs build/noita/image.bin, which difftest writes.
+# The launcher's runtime files (build_all.py LAUNCHER) minus main.c.
+HLE=$(sed -nE 's/^LAUNCHER = \((.*)\).*/\1/p' tools/build_all.py | tr -d '",' | tr ' ' '\n' | grep -v '^main.c$' | sed 's|^|runtime/|')
 if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/env_test.c runtime/rt.c \
-        runtime/heap.c runtime/proc.c runtime/msvcr120.c runtime/kernel32.c -o build/envtest >"$LOG/envtest.log" 2>&1 \
-        && build/envtest build/noita/image.bin >>"$LOG/envtest.log" 2>&1; then
+        $HLE -o build/envtest >"$LOG/envtest.log" 2>&1 \
+        && build/envtest build/noita/image.bin "${NOITA_DIR:-build/game}/msvcp120.dll" >>"$LOG/envtest.log" 2>&1; then
     echo "envtest: ok $(grep -c ' ok ' "$LOG/envtest.log") checks"
 else
     echo "envtest: FAIL, see $LOG/envtest.log"; status=1
@@ -84,6 +86,12 @@ if uv run tools/loadtest.py >"$LOG/loadtest.log" 2>&1; then
     echo "loadtest: ok $(grep -c ' 0 differ' "$LOG/loadtest.log") modules"
 else
     echo "loadtest: FAIL, see $LOG/loadtest.log"; status=1
+fi
+
+if uv run tools/undnametest.py >"$LOG/undnametest.log" 2>&1; then
+    echo "undnametest: ok $(tail -1 "$LOG/undnametest.log")"
+else
+    echo "undnametest: FAIL, see $LOG/undnametest.log"; status=1
 fi
 
 build/noitamac >"$LOG/launcher.log" 2>&1

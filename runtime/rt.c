@@ -134,6 +134,30 @@ uint32_t rt_thunk(const char *dll, const char *name) {
     return THUNK_BASE + THUNK_STRIDE * i;
 }
 
+enum { MAX_MODULES = 16 };
+static struct { const char *dll; uint32_t base; } MODULES[MAX_MODULES];
+static int NMODULES;
+
+void rt_register_module(const char *dll, uint32_t base) {
+    if (NMODULES == MAX_MODULES) { fprintf(stderr, "too many modules\n"); exit(2); }
+    MODULES[NMODULES++] = (typeof(MODULES[0])){strdup(dll), base};
+}
+
+uint32_t rt_export(uint32_t base, const char *name) {
+    uint32_t nt = base + rd32(base + 0x3c), rva = rd32(nt + 24 + 96), size = rd32(nt + 24 + 96 + 4);
+    if (!rva) return 0;
+    uint32_t d = base + rva, n = rd32(d + 20), funcs = base + rd32(d + 28);  // IMAGE_EXPORT_DIRECTORY
+    uint32_t i = 0xffffffffu;
+    if (name[0] == '#') i = (uint32_t)atoi(name + 1) - rd32(d + 16);  // ordinal - Base
+    else
+        for (uint32_t k = 0, names = base + rd32(d + 32), ords = base + rd32(d + 36); k < rd32(d + 24); k++)
+            if (!strcmp((const char *)P(base + rd32(names + 4 * k)), name)) { i = rd16(ords + 2 * k); break; }
+    if (i >= n || !rd32(funcs + 4 * i)) return 0;
+    uint32_t f = rd32(funcs + 4 * i);
+    if (f >= rva && f < rva + size) { fprintf(stderr, "%s: forwarded exports not supported\n", name); exit(2); }
+    return base + f;
+}
+
 int rt_bind_imports(uint32_t base) {
     uint32_t nt = base + rd32(base + 0x3c);
     if (rd32(nt) != 0x4550 || rd16(nt + 24) != 0x10b) { fprintf(stderr, "%#x: not a PE32 image\n", base); exit(2); }
@@ -142,13 +166,17 @@ int rt_bind_imports(uint32_t base) {
     for (uint32_t d = base + dir; dir && rd32(d + 12); d += 20) {  // IMAGE_IMPORT_DESCRIPTOR
         const char *dll = (const char *)P(base + rd32(d + 12));
         uint32_t names = rd32(d) ? rd32(d) : rd32(d + 16);  // OriginalFirstThunk, else FirstThunk
-        uint32_t iat = base + rd32(d + 16);
+        uint32_t iat = base + rd32(d + 16), mod = 0;
+        for (int m = 0; m < NMODULES; m++)
+            if (!strcasecmp(MODULES[m].dll, dll)) mod = MODULES[m].base;
         for (uint32_t k = 0, e; (e = rd32(base + names + 4 * k)); k++) {
             char ord[16];
             const char *name = ord;
             if (e & 0x80000000u) snprintf(ord, sizeof ord, "#%u", e & 0xffff);
             else name = (const char *)P(base + e + 2);  // IMAGE_IMPORT_BY_NAME: hint, name
-            wr32(iat + 4 * k, rt_thunk(dll, name));
+            uint32_t a = mod ? rt_export(mod, name) : rt_thunk(dll, name);
+            if (!a) { fprintf(stderr, "%s has no export %s\n", dll, name); exit(2); }
+            wr32(iat + 4 * k, a);
             n++;
         }
     }
