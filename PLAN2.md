@@ -157,14 +157,13 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
 
 ### Phase 7: playable
 
-- [ ] Play a run.
+- [x] Play a run.
   - 2026-09-26, user playtest (the loop's launches, no timeout needed): the first level is playable. Moving,
     shooting and killing enemies work, it felt smooth with no slowdown, and no crash was seen (the run ended
     because the agent killed the process). Second session: Continue works (it restored a player made by
     the `starting_loadouts` mod, correctly), the mod's Lua and custom player sprite work, death → progress
     screen → death menu → new game works, windowed → fullscreen works, and SIGTERM exits 0 after the game
-    saves its config. Not yet reached: options/rebinding,
-    30+ minute session.
+    saves its config. Options/rebinding and a 30+ minute session moved to the last task (they need a person).
   - **Fixed: missing Holy Mountain items and start-area cart.** Perks spawned but hearts, spell refresh,
     shop wands/spells, the workshop (wand editing) and the starting cart didn't. Perks come from the built-in
     `data/scripts/wang_scripts.csv`; the rest from Lua `RegisterSpawnFunction( 0xff6d934c, ... )`. Our
@@ -231,3 +230,5 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Generated C is derived from the game and must not ship, so the app build runs the
     discover/lift/build pipeline locally against the user's exe (bring-your-own). Document that in the
     README.
+- [ ] Manual playtest (needs a person; the loop should skip it): rebind a key in Options (keyboard and
+  mouse), and play one 30+ minute session. Record crashes, hangs or anything wrong.
