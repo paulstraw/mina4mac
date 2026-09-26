@@ -39,7 +39,7 @@ def _lift_chunk(args):
 
 
 def _cc(src):
-    obj = src.with_suffix(".o")
+    obj = GEN / (src.stem + ".o")
     subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w",
                     "-I", str(ROOT / "runtime"), "-I", str(GEN), str(src), "-o", str(obj)], check=True)
     return obj

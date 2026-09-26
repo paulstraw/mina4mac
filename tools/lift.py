@@ -409,6 +409,8 @@ class FnLifter:
             self.emit("return;")
         elif m in ("int3", "ud2", "hlt", "int"):
             self.emit(f"guest_unimpl(c, {i.address:#x}u, \"{m}\");")
+        elif m.startswith("f") and m not in ("fs",):
+            self.lift_x87(i, m, ops)
         else:
             self.lift_sse(i, m, ops)
 
@@ -453,6 +455,102 @@ class FnLifter:
             self.call_indirect("0", ret, import_slot=op.mem.disp & 0xffffffff)
         else:
             self.call_indirect(self.rd(op, 4), ret)
+
+    def st_index(self, op):
+        n = self.reg_name(op.reg)
+        mm = re.fullmatch(r"st\((\d)\)", n)
+        if not mm:
+            raise Unsupported(f"x87 reg {n}")
+        return int(mm.group(1))
+
+    def fmem(self, op):
+        """Read a memory operand of an x87 arithmetic/load instruction as double."""
+        a = self.addr(op.mem)
+        return {4: f"(double)rdf32({a})", 8: f"rdf64({a})"}[op.size]
+
+    def fimem(self, op):
+        a = self.addr(op.mem)
+        return {2: f"(double)(int16_t)rd16({a})", 4: f"(double)(int32_t)rd32({a})", 8: f"(double)(int64_t)rd64({a})"}[op.size]
+
+    def lift_x87(self, i, m, ops):
+        isst = lambda o: o.type == x86.X86_OP_REG  # noqa: E731
+        arith = {"add": "a_ + b_", "sub": "a_ - b_", "subr": "b_ - a_", "mul": "a_ * b_", "div": "a_ / b_", "divr": "b_ / a_"}
+        if m in ("fld", "fild"):
+            if isst(ops[0]):
+                self.emit(f"st_push(c, ST({self.st_index(ops[0])}));")
+            else:
+                if m == "fld" and ops[0].size == 10:
+                    raise Unsupported("fld m80")
+                self.emit(f"st_push(c, {self.fmem(ops[0]) if m == 'fld' else self.fimem(ops[0])});")
+        elif m in ("fldz", "fld1"):
+            self.emit(f"st_push(c, {'0.0' if m == 'fldz' else '1.0'});")
+        elif m in ("fst", "fstp"):
+            if isst(ops[0]):
+                self.emit(f"ST({self.st_index(ops[0])}) = ST(0);")
+            elif ops[0].size == 4:
+                self.emit(f"wrf32({self.addr(ops[0].mem)}, (float)ST(0));")
+            elif ops[0].size == 8:
+                self.emit(f"wrf64({self.addr(ops[0].mem)}, ST(0));")
+            else:
+                raise Unsupported("fstp m80")
+            if m == "fstp":
+                self.emit("st_pop(c);")
+        elif m in ("fist", "fistp", "fisttp"):
+            sz = ops[0].size
+            v = "__builtin_trunc(ST(0))" if m == "fisttp" else "fpu_round(c, ST(0))"
+            self.emit(f"{WR[sz]}({self.addr(ops[0].mem)}, ({UT[sz]})fist64({v}, {sz * 8}));")
+            if m != "fist":
+                self.emit("st_pop(c);")
+        elif m.rstrip("p") in ("fadd", "fsub", "fsubr", "fmul", "fdiv", "fdivr") or m in ("fiadd", "fisub", "fisubr", "fimul", "fidiv", "fidivr"):
+            pop = m.endswith("p") and m not in ("fsubr", "fdivr") or m in ("faddp", "fsubp", "fsubrp", "fmulp", "fdivp", "fdivrp")
+            base = m[2:] if m.startswith("fi") else m[1:]
+            if pop:
+                base = base[:-1]
+            expr = arith[base]
+            if len(ops) == 1 and not isst(ops[0]):
+                src = self.fimem(ops[0]) if m.startswith("fi") else self.fmem(ops[0])
+                self.emit(f"{{ double a_ = ST(0), b_ = {src}; ST(0) = {expr}; }}")
+            else:
+                if len(ops) == 1:
+                    d, s_ = self.st_index(ops[0]), 0
+                else:
+                    d, s_ = self.st_index(ops[0]), self.st_index(ops[1])
+                if len(ops) == 0:
+                    d, s_ = 1, 0
+                self.emit(f"{{ double a_ = ST({d}), b_ = ST({s_}); ST({d}) = {expr}; }}")
+                if pop:
+                    self.emit("st_pop(c);")
+        elif m in ("fchs", "fabs", "fsqrt"):
+            f = {"fchs": "-ST(0)", "fabs": "__builtin_fabs(ST(0))", "fsqrt": "__builtin_sqrt(ST(0))"}[m]
+            self.emit(f"ST(0) = {f};")
+        elif m == "fxch":
+            k = self.st_index(ops[0]) if ops else 1
+            self.emit(f"{{ double t_ = ST(0); ST(0) = ST({k}); ST({k}) = t_; }}")
+        elif m in ("fcomi", "fucomi", "fcomip", "fucomip"):
+            k = self.st_index(ops[1] if len(ops) > 1 else ops[0])
+            self.emit(f"{{ double a_ = ST(0), b_ = ST({k}); int un_ = a_ != a_ || b_ != b_; zf = un_ || a_ == b_; pf = un_; cf = un_ || a_ < b_; of = sf = 0; }}")
+            if m.endswith("p"):
+                self.emit("st_pop(c);")
+        elif m in ("fcom", "fcomp", "fcompp", "fucom", "fucomp", "fucompp", "ficom", "ficomp"):
+            if ops and not isst(ops[-1]):
+                src = self.fimem(ops[0]) if m.startswith("fi") else self.fmem(ops[0])
+            else:
+                src = f"ST({self.st_index(ops[-1]) if ops else 1})"
+            self.emit(f"c->fpu_sw = fcom_bits(ST(0), {src});")
+            pops = 2 if m.endswith("pp") else 1 if m.endswith("p") else 0
+            self.emit("st_pop(c);" * pops)
+        elif m == "fnstsw":
+            self.wr(ops[0], "(uint16_t)(c->fpu_sw | ((c->st_top & 7) << 11))", 2)
+        elif m == "fnstcw":
+            self.emit(f"wr16({self.addr(ops[0].mem)}, c->fpu_cw);")
+        elif m == "fldcw":
+            self.emit(f"c->fpu_cw = rd16({self.addr(ops[0].mem)});")
+        elif m.startswith("fcmov"):
+            cc = {"fcmovb": "cf", "fcmovnb": "!cf", "fcmove": "zf", "fcmovne": "!zf", "fcmovbe": "(cf|zf)",
+                  "fcmovnbe": "!(cf|zf)", "fcmovu": "pf", "fcmovnu": "!pf"}[m]
+            self.emit(f"if ({cc}) ST(0) = ST({self.st_index(ops[1])});")
+        else:
+            raise Unsupported(m)
 
     def lift_sse(self, i, m, ops):
         X = self.xmm

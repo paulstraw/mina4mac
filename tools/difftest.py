@@ -128,6 +128,11 @@ class Ref:
             mu.reg_write(r, v)
         for k in range(8):
             mu.reg_write(X.UC_X86_REG_XMM0 + k, int.from_bytes(xmm[k * 16:(k + 1) * 16], "little"))
+        mu.reg_write(X.UC_X86_REG_FPSW, 0)
+        mu.reg_write(X.UC_X86_REG_FPTAG, 0xffff)
+        for k in range(8):
+            mu.reg_write(X.UC_X86_REG_FP0 + k, (0, 0))
+        mu.reg_write(X.UC_X86_REG_FPCW, 0x27F)  # Windows default: 53-bit precision, round-to-nearest
         mu.emu_start(func, SENTINEL, count=limit)
         if mu.reg_read(X.UC_X86_REG_EIP) != SENTINEL:
             raise RuntimeError("instruction limit")
@@ -169,6 +174,7 @@ def main():
     ap.add_argument("--trials", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--only", type=lambda s: int(s, 16))
+    ap.add_argument("--x87", action="store_true", help="only functions whose own body uses x87")
     ap.add_argument("--all", action="store_true", help="use the whole-program build (indirect calls allowed)")
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -177,7 +183,14 @@ def main():
     if args.only:
         cands, total = [(args.only, closure(ok, [args.only]))], 1
     else:
-        cands, total = pick_candidates(ok, args.funcs, rng, args.all)
+        if args.x87:
+            ok_x87 = {a: v for a, v in ok.items()
+                      if any(prog.insns[x][1].startswith("f") for x in prog.function_body(a))}
+            pool, _ = pick_candidates(ok, 10**9, rng, args.all)
+            pool = [(a, cl) for a, cl in pool if a in ok_x87]
+            cands, total = pool[:args.funcs], len(pool)
+        else:
+            cands, total = pick_candidates(ok, args.funcs, rng, args.all)
     print(f"{total:,} functions have self-contained call trees; testing {len(cands)}")
     funcs = set().union(*(cl for _, cl in cands))
     exe = BUILD / "harness_all" if args.all else build_native(prog, funcs)

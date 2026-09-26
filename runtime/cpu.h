@@ -17,6 +17,8 @@ typedef struct CPU {
     Xmm xmm[8];
     double st[8];      // x87 stack, modelled in double precision
     int st_top;
+    uint16_t fpu_cw;   // x87 control word (rounding mode used by fist/fistp)
+    uint16_t fpu_sw;   // x87 condition bits C0/C2/C3 from fcom*
 } CPU;
 
 // Guest memory: a 4 GB region; guest address a lives at MEM + a.
@@ -53,6 +55,28 @@ static inline uint32_t cvtt_f64_i32(double f) {
 }
 static inline float f32_from_bits(uint32_t v) { float f; memcpy(&f, &v, 4); return f; }
 static inline uint32_t f32_bits(float f) { uint32_t v; memcpy(&v, &f, 4); return v; }
+
+#define ST(i) c->st[(c->st_top + (i)) & 7]
+static inline void st_push(CPU *c, double v) { c->st_top = (c->st_top - 1) & 7; c->st[c->st_top] = v; }
+static inline void st_pop(CPU *c) { c->st_top = (c->st_top + 1) & 7; }
+static inline double fpu_round(CPU *c, double v) {
+    switch ((c->fpu_cw >> 10) & 3) {
+    case 0: return __builtin_rint(v);
+    case 1: return __builtin_floor(v);
+    case 2: return __builtin_ceil(v);
+    default: return __builtin_trunc(v);
+    }
+}
+// x87 float->int stores: out-of-range / NaN give the "integer indefinite" value.
+static inline int64_t fist64(double v, int bits) {
+    double lim = bits == 64 ? 9223372036854775808.0 : bits == 32 ? 2147483648.0 : 32768.0;
+    if (v != v || v >= lim || v < -lim) return bits == 64 ? INT64_MIN : bits == 32 ? INT32_MIN : INT16_MIN;
+    return (int64_t)v;
+}
+static inline uint16_t fcom_bits(double a, double b) {
+    if (a != a || b != b) return 0x4500;
+    return a < b ? 0x0100 : a == b ? 0x4000 : 0;
+}
 
 typedef void (*GuestFn)(CPU *);
 void guest_call(CPU *c, uint32_t target);   // indirect call dispatch (runtime)
