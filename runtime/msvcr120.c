@@ -46,7 +46,7 @@ HOST(msvcr120, concrt_free, "?Free@Concurrency@@YAXPAX@Z", 0) { heap_free(ARG(0)
 // Data imports (_acmdln, _fmode, _commode) live in their thunk's 16 bytes of guest memory: the IAT slot
 // holds the thunk address, which guest code dereferences as the variable's address.
 #define MSVCR "MSVCR120.dll"
-static uint32_t ARGC, ARGV, ENVP;
+static uint32_t ARGC, ARGV, ENVP, CMDLINE_W;
 
 void crt_init(int argc, char **argv) {
     // argv[0] is this launcher; the game sees itself as noita.exe.
@@ -66,10 +66,17 @@ void crt_init(int argc, char **argv) {
     }
     ENVP = heap_calloc(1, 4);  // an empty environment
     wr32(rt_thunk(MSVCR, "_acmdln"), guest_strdup(cmdline));
+    uint32_t need = utf8_to_utf16(cmdline, 0, 0);  // measure (cap 0 never fits), then convert
+    CMDLINE_W = heap_alloc(2 * need);
+    utf8_to_utf16(cmdline, CMDLINE_W, need);
     free(cmdline);
     wr32(rt_thunk(MSVCR, "_fmode"), 0);    // _O_TEXT
     wr32(rt_thunk(MSVCR, "_commode"), 0);
 }
+
+// KERNEL32's view of the same command line (SDL2main's WinMain parses it into SDL_main's argv).
+HOST_STDCALL(kernel32, GetCommandLineA, 0) { ret_i32(c, rd32(rt_thunk(MSVCR, "_acmdln"))); }
+HOST_STDCALL(kernel32, GetCommandLineW, 0) { ret_i32(c, CMDLINE_W); }
 
 // (int *argc, char ***argv, char ***envp, int dowildcard, _startupinfo *)
 HOST_CDECL(msvcr120, __getmainargs) {

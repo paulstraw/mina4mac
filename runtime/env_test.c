@@ -3,7 +3,8 @@
 // static TLS set up for noita.exe; then the CRT startup imports (command line, initializer tables,
 // exit handlers, _controlfp_s) and the KERNEL32 identity/time imports it calls; then the imports the C++
 // static initializers use (memory/string/locale/stdio/printf/math/type_info/ConcRT/critical sections/
-// __dllonexit/paths) and binding the exe's MSVCP120 imports to the recompiled msvcp120.dll's exports.
+// __dllonexit/paths), binding the exe's MSVCP120 imports to the recompiled msvcp120.dll's exports, and the
+// command line and SDL2 helpers SDL2main's WinMain uses.
 //   env_test <noita image.bin> <msvcp120.dll>
 #include <pthread.h>
 #include <signal.h>
@@ -87,6 +88,7 @@ static uint32_t call(CPU *c, const char *dll, const char *name, int n, const uin
     return sp;
 }
 #define CRT(name, ...) (call(&c, "MSVCR120.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
+#define SDL(name, ...) (call(&c, "SDL2.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
 #define K32(name, ...) (call(&c, "KERNEL32.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
 
 static int all(uint32_t p, uint8_t v, uint32_t n) {
@@ -428,6 +430,23 @@ int main(int argc, char **argv) {
           && !strcmp((char *)P(rd32(av + 4)), "-x") && !strcmp((char *)P(rd32(av + 8)), "a b") && !rd32(av + 12), 1);
     CHECK("envp empty", rd32(rd32(penv)), 0);
     CHECK("_acmdln", strcmp((char *)P(rd32(rt_thunk("MSVCR120.dll", "_acmdln"))), "\"noita.exe\" -x \"a b\""), 0);
+    uint32_t cmdw = K32("GetCommandLineW");
+    char cmd8[64];
+    CHECK("GetCommandLineW", utf16_to_utf8(cmdw, cmd8, sizeof cmd8) && !strcmp(cmd8, "\"noita.exe\" -x \"a b\""), 1);
+    CHECK("GetCommandLineA", K32("GetCommandLineA"), rd32(rt_thunk("MSVCR120.dll", "_acmdln")));
+
+    // SDL2main's WinMain helpers: turn the UTF-16 command line into UTF-8 for SDL_main's argv.
+    uint32_t n16 = SDL("SDL_wcslen", cmdw);
+    CHECK("SDL_wcslen", n16, strlen(cmd8));
+    uint32_t to = guest_strdup("UTF-8"), from = guest_strdup("UTF-16LE");
+    uint32_t u8 = SDL("SDL_iconv_string", to, from, cmdw, 2 * (n16 + 1));
+    CHECK("SDL_iconv_string UTF-16LE", u8 && !strcmp((char *)P(u8), cmd8), 1);
+    CHECK("SDL_iconv_string unsupported", SDL("SDL_iconv_string", from, to, u8, 4), 0);
+    CHECK("SDL_isspace", SDL("SDL_isspace", '\v') * 2 + SDL("SDL_isspace", 'x'), 2);
+    uint32_t sm = SDL("SDL_malloc", 0);
+    CHECK("SDL_malloc(0)", sm && heap_owns(sm), 1);
+    SDL("SDL_free", sm);
+    CHECK("SDL_free", heap_owns(sm), 0);
     uint32_t tab = heap_calloc(4, 4);
     wr32(tab, G_A); wr32(tab + 8, G_B);
     CRT("_initterm", tab, tab + 16);

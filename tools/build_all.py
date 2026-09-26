@@ -20,7 +20,7 @@ from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
-LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c")  # runtime files only the launcher links
+LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "sdl2_stdlib.c")  # runtime files only the launcher links
 CHUNKS = 128
 _prog = None
 

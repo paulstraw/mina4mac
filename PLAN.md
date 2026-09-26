@@ -254,8 +254,10 @@ Gotchas that already bit us:
   which initializers were problematic.
   - msvcp120 is recompiled: build_all builds noita+msvcp120 by default; the launcher maps it (`main.c` `DLLS`), `rt_register_module` binds the exe's 141 MSVCP120 slots to its exports (`rt_export`), runs its DllMain, then chdirs to the game dir (guest sees it as `Z:\…`, hle.c). New HLE files: msvcr120_{stdio,string,math,concrt}.c, shlwapi.c, sync.c (host mutex pool for CRITICAL_SECTION/ConcRT), hle.c, undname.c. Both `_initterm` tables complete (exe: 790 entries, ~15k import calls); now stops at `KERNEL32!GetCommandLineW` from 0xdfb41b (pre-WinMain).
   - Problematic: `type_info::name` (359 calls, component names; undname.c matches llvm-undname on 2736/2758 RTTI names, 22 local-class/member-pointer names fall back to the decorated name), the logger's `_fsopen("logger.txt")`, ConcRT critical_section, GetCurrentDirectoryW+PathAppendW. Gotchas: no CR/LF text translation; sin/cos/pow use host libm (may differ in last bit); exceptions still unsupported. check.sh seed 2468: 97087 lifted; default 2283 / x87 157 pass, 0 fail/native_err; envtest 122 checks; new undnametest ok.
-- [ ] Run until the program's main entry (WinMain → SDL's `SDL_main`) is entered. Identify its address,
+- [x] Run until the program's main entry (WinMain → SDL's `SDL_main`) is entered. Identify its address,
   note it, and log entry with the trace.
+  - WinMain = SDL2main's stub 0xdfb400 (statically linked; parses GetCommandLineW at 0xdfb410) → **SDL_main = 0x80b6f0** (called at 0xdfb52b). New `runtime/sdl2_stdlib.c` HLEs SDL_malloc/free/wcslen/isspace/iconv_string (UTF-16LE→UTF-8 only) and SDL_SetMainReady, which under NOITAMAC_TRACE logs `[noitamac] entering SDL_main 0x80b6f0 (argc 1, "noita.exe")`; gen_sdl.py must skip these (guest-heap, not host SDL). GetCommandLineA/W live in msvcr120.c next to crt_init.
+  - Next blocker: `SHELL32!SHGetKnownFolderPath` from 0xdb9067 (early in SDL_main). check.sh seed 9001: 97087 lifted; default 2225 / x87 156 pass, 0 fail/native_err; envtest 130 checks; all tests ok.
 
 ### Phase 3: first window
 

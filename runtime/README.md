@@ -42,6 +42,7 @@ paths back. stdio does no text-mode CR/LF translation. Only the "C" locale exist
 | `msvcr120_stdio.c` | FILE functions and the MSVC-style printf engine over guest varargs (`crt_vformat`) |
 | `msvcr120_string.c`, `msvcr120_math.c`, `msvcr120_concrt.c` | mem/str/ctype/conversions/rand/locale; libm; ConcRT locks, events, condition variables |
 | `shlwapi.c` | SHLWAPI (PathAppendW) |
+| `sdl2_stdlib.c` | the SDL2 C-library helpers SDL2main's WinMain uses (SDL_malloc/free/wcslen/isspace/iconv_string) and SDL_SetMainReady, which traces SDL_main's entry |
 | `hle.c`/`hle.h` | helpers shared by HLE files: guest strings, UTF-8/16, Windows paths, errno |
 | `sync.c`/`sync.h` | pool of host mutex/condvar objects behind guest critical sections and ConcRT objects |
 | `undname.c`/`undname.h` | MSVC RTTI type name undecoration for `type_info::name` (checked by `tools/undnametest.py`) |
