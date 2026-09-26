@@ -74,17 +74,16 @@ def rand_block(rng, size):
 
 def build_native(prog, funcs):
     GEN.mkdir(parents=True, exist_ok=True)
-    out = ['#include "cpu.h"']
+    out = ['#include "rt.h"']
     out += [f"void F_{a:08x}(CPU *restrict c);" for a in sorted(funcs)]
     for a in sorted(funcs):
         out.append(FnLifter(prog, a).lift())
-    out.append("typedef struct { uint32_t addr; GuestFn fn; } FnEntry;")
     out.append("const FnEntry FN_TABLE[] = {" + ",".join(f"{{{a:#x}u,F_{a:08x}}}" for a in sorted(funcs)) + "};")
     out.append(f"const int FN_COUNT = {len(funcs)};")
     (GEN / "code.c").write_text("\n".join(out))
     exe = BUILD / "harness"
     subprocess.run(["clang", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w",
-                    "-I", str(ROOT / "runtime"), str(ROOT / "runtime/harness.c"), str(GEN / "code.c"),
+                    "-I", str(ROOT / "runtime"), str(ROOT / "runtime/harness.c"), str(ROOT / "runtime/rt.c"), str(GEN / "code.c"),
                     "-o", str(exe)], check=True)
     return exe
 

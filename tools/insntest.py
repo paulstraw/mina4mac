@@ -69,7 +69,7 @@ def main():
             tests.append((CODE + 32 * len(tests), a, m))
 
     # Native: one function per test, the lifted instruction then the same flags tail.
-    out = ['#include "cpu.h"']
+    out = ['#include "rt.h"']
     for t, a, m in tests:
         i = prog.decode(a)
         tail = list(prog.md.disasm(TAIL, t + i.size))
@@ -86,7 +86,6 @@ def main():
         out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;")
         out.extend(lf.lines)
         out.append("}")
-    out.append("typedef struct { uint32_t addr; GuestFn fn; } FnEntry;")
     out.append("const FnEntry FN_TABLE[] = {" + ",".join(f"{{{t:#x}u,F_{t:08x}}}" for t, _, _ in tests) + "};")
     out.append(f"const int FN_COUNT = {len(tests)};")
     out.append("void guest_call(CPU *c, uint32_t t);")
@@ -94,7 +93,7 @@ def main():
     (GEN / "insntest.c").write_text("\n".join(out))
     exe = BUILD / "insntest"
     subprocess.run(["clang", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", "-I", str(ROOT / "runtime"),
-                    str(ROOT / "runtime/harness.c"), str(GEN / "insntest.c"), "-o", str(exe)], check=True)
+                    str(ROOT / "runtime/harness.c"), str(ROOT / "runtime/rt.c"), str(GEN / "insntest.c"), "-o", str(exe)], check=True)
 
     ref = Ref(prog)
     ref.mu.mem_map(CODE, 0x10000)

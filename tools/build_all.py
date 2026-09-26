@@ -1,4 +1,5 @@
-"""Lift every function into chunked C files, compile them in parallel, link the test harness.
+"""Lift every function into chunked C files, compile them in parallel, link the test harness
+(build/harness_all) and the microbenchmark (build/bench <image.bin>).
 
 Functions the lifter can't handle yet become stubs that report guest_unimpl.
 """
@@ -55,17 +56,19 @@ def main():
     with mp.Pool(os.cpu_count(), initializer=_init) as pool:
         failed = sum(pool.map(_lift_chunk, chunks))
     t1 = time.time()
-    table = ['#include "cpu.h"', '#include "decls.h"',
-             "typedef struct { uint32_t addr; GuestFn fn; } FnEntry;",
+    table = ['#include "rt.h"', '#include "decls.h"',
              "const FnEntry FN_TABLE[] = {" + ",".join(f"{{{a:#x}u,F_{a:08x}}}" for a in starts) + "};",
              f"const int FN_COUNT = {len(starts)};"]
     (GEN / "table.c").write_text("\n".join(table))
-    srcs = sorted(GEN.glob("chunk*.c")) + [GEN / "table.c", ROOT / "runtime/harness.c"]
+    mains = [ROOT / "runtime/harness.c", ROOT / "runtime/bench.c"]
+    srcs = sorted(GEN.glob("chunk*.c")) + [GEN / "table.c", ROOT / "runtime/rt.c"] + mains
     with mp.Pool(os.cpu_count()) as pool:
         objs = pool.map(_cc, srcs)
     t2 = time.time()
+    common = [str(o) for o in objs if o.stem not in ("harness", "bench")]
     exe = ROOT / "build/harness_all"
-    subprocess.run(["clang", *map(str, objs), "-o", str(exe)], check=True)
+    subprocess.run(["clang", *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
+    subprocess.run(["clang", *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,})")

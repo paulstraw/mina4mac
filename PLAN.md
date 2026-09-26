@@ -181,10 +181,12 @@ Gotchas that already bit us:
   recompiled code.
   - `FnLifter.lift_locked` emits seq_cst `lk_{xchg,cas,add,sub,and,or,xor}{8,16,32,64}` helpers (cpu.h). Misaligned addresses fall back to non-atomic, because ARM64 atomics SIGBUS. The binary only uses lock xadd (72), xchg mem (79), lock cmpxchg (2) and lock cmpxchg8b (2); the other lock ops are untested. Plain loads/stores still lack x86 TSO ordering.
   - `tools/atomictest.py` + `runtime/atomic_test.c`: 8 threads × 200k on real lifted xadd/xchg-spinlock/cmpxchg/cmpxchg8b, all exact (the old lifter hangs). Added to check.sh. check.sh seed 2601: 97087 lifted; default 2254 / x87 156 pass, 0 fail/native_err. insntest: 1288 pass. difftest now counts "no function at" as ref_skip.
-- [ ] Move shared runtime code (MEM setup, image loading, function lookup, `guest_*`) from `harness.c` and
+- [x] Move shared runtime code (MEM setup, image loading, function lookup, `guest_*`) from `harness.c` and
   `bench.c` into `runtime/rt.c` + `runtime/rt.h`. Replace the binary-search lookup in `guest_call` with an
   O(1) two-level page table (guest addr >> 12 → page of `GuestFn`s). Verify with `tools/check.sh` and
   check that `build/bench` shows no regression.
+  - `rt.h` has `FnEntry`/`FN_TABLE`, `rt_init`, `rt_load_image` and `rt_lookup`. Pages are built lazily from FN_TABLE and CAS-published (all 2,565 eagerly would be ~80 MB); empty pages share one zero page. Every harness (difftest, insntest, atomictest) now links rt.c, and build_all also links `build/bench`.
+  - check.sh seed 7331: 97087 lifted; default 2248 / x87 153 pass, 0 fail/native_err; atomictest ok. Bench is unchanged (rng 12.4 ns, noise 123 ns), and lookup takes 2.1 ns vs 60 ns for the binary search.
 
 ### Phase 1: multiple modules
 

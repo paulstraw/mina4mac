@@ -1,17 +1,12 @@
 // Microbenchmarks: recompiled guest functions vs hand-written native equivalents.
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 #include <time.h>
 
-#include "cpu.h"
+#include "rt.h"
 
-typedef struct { uint32_t addr; GuestFn fn; } FnEntry;
-extern const FnEntry FN_TABLE[];
-extern const int FN_COUNT;
-uint8_t *MEM;
-
-static GuestFn lookup(uint32_t a) {
+// The pre-page-table lookup, kept as the dispatch benchmark's reference.
+__attribute__((noinline)) static GuestFn bsearch_fn(uint32_t a) {
     for (int lo = 0, hi = FN_COUNT - 1; lo <= hi;) {
         int mid = (lo + hi) / 2;
         if (FN_TABLE[mid].addr == a) return FN_TABLE[mid].fn;
@@ -19,9 +14,6 @@ static GuestFn lookup(uint32_t a) {
     }
     return NULL;
 }
-void guest_call(CPU *c, uint32_t t) { GuestFn f = lookup(t); if (!f) abort(); f(c); }
-void guest_import(CPU *c, uint32_t s) { (void)c; fprintf(stderr, "import %#x\n", s); abort(); }
-void guest_unimpl(CPU *c, uint32_t a, const char *w) { (void)c; fprintf(stderr, "unimpl %#x %s\n", a, w); abort(); }
 
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + t.tv_nsec * 1e-9; }
 
@@ -38,13 +30,12 @@ __attribute__((noinline)) static double rng_native(double *seed) {
 }
 
 int main(int argc, char **argv) {
-    MEM = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-    FILE *im = fopen(argv[1], "rb");
-    fread(MEM + 0x400000, 1, 64 << 20, im);
-    fclose(im);
+    if (argc != 2) { fprintf(stderr, "usage: bench <image.bin>\n"); return 2; }
+    rt_init();
+    rt_load_image(argv[1], 0x400000);
     const uint32_t SEED = 0x10000000, STACK = 0x08010000;
     CPU c = {0};
-    GuestFn rng = lookup(0xdda6b0);
+    GuestFn rng = rt_lookup(0xdda6b0);
     const int N = 50000000;
 
     // Recompiled: call it the way a guest caller would (push return address, ecx = &seed).
@@ -64,7 +55,7 @@ int main(int argc, char **argv) {
            (t1 - t0) / N * 1e9, (t2 - t1) / N * 1e9, acc, acc2, rdf64(SEED), s);
 
     // Noise function 0xc3ef20 (float-heavy, calls helpers): recompiled cost per call.
-    GuestFn noise = lookup(0xc3ef20);
+    GuestFn noise = rt_lookup(0xc3ef20);
     const uint32_t OBJ = 0x10001000;
     for (int i = 0; i < 64; i++) wrf32(OBJ + 4 * i, 1.5f + i);
     const int M = 5000000;
@@ -76,5 +67,24 @@ int main(int argc, char **argv) {
     }
     t1 = now();
     printf("noise recompiled %.2f ns/call (out %f)\n", (t1 - t0) / M * 1e9, rdf32(OBJ + 0x80));
+
+    // guest_call dispatch: rt_lookup (page table) vs the old binary search over FN_TABLE, on random
+    // function addresses (after one warm-up pass so every page is built).
+    enum { K = 1 << 16 };
+    static uint32_t targets[K];
+    srand(1);
+    for (int i = 0; i < K; i++) targets[i] = FN_TABLE[rand() % FN_COUNT].addr;
+    const int R = 200;
+    uintptr_t chk = 0, chk2 = 0;
+    for (int i = 0; i < K; i++) chk ^= (uintptr_t)rt_lookup(targets[i]);
+    t0 = now();
+    for (int r = 0; r < R; r++)
+        for (int i = 0; i < K; i++) chk ^= (uintptr_t)rt_lookup(targets[i]);
+    t1 = now();
+    for (int r = 0; r < R + 1; r++)
+        for (int i = 0; i < K; i++) chk2 ^= (uintptr_t)bsearch_fn(targets[i]);
+    t2 = now();
+    printf("lookup page table %.2f ns, binary search %.2f ns (%d fns, %s)\n", (t1 - t0) / (R * K) * 1e9,
+           (t2 - t1) / ((R + 1) * K) * 1e9, FN_COUNT, chk == chk2 ? "same results" : "MISMATCH");
     return 0;
 }

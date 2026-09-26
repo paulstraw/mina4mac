@@ -5,19 +5,13 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/mman.h>
 
-#include "cpu.h"
+#include "rt.h"
 
 void T_xadd(CPU *c);       // lock xadd [ecx], eax
 void T_xchg(CPU *c);       // xchg [eax], esi
 void T_cmpxchg(CPU *c);    // lock cmpxchg [esi], ecx
 void T_cmpxchg8b(CPU *c);  // lock cmpxchg8b [esi]
-
-uint8_t *MEM;
-void guest_call(CPU *c, uint32_t t) { (void)c; fprintf(stderr, "guest_call %#x\n", t); exit(5); }
-void guest_import(CPU *c, uint32_t s) { (void)c; fprintf(stderr, "import %#x\n", s); exit(4); }
-void guest_unimpl(CPU *c, uint32_t a, const char *w) { (void)c; fprintf(stderr, "unimpl %#x %s\n", a, w); exit(3); }
 
 // Shared guest words, each on its own cache line.
 enum { XADD = 0x1000, LOCK = 0x1040, GUARDED = 0x1080, CAS = 0x10c0, CAS8 = 0x1100, STACKS = 0x100000 };
@@ -62,8 +56,7 @@ int main(int argc, char **argv) {
     if (argc != 3) return 2;
     int nt = atoi(argv[1]);
     ITERS = atoi(argv[2]);
-    MEM = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-    if (MEM == MAP_FAILED) { perror("mmap"); return 2; }
+    rt_init();
     wr64(CAS8, CAS8_START);
     pthread_t th[64];
     Arg args[64];

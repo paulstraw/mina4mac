@@ -30,7 +30,7 @@ def main():
     ap.add_argument("--iters", type=int, default=200000)
     args = ap.parse_args()
     prog = Program()
-    out = ['#include "cpu.h"']
+    out = ['#include "rt.h"', "const FnEntry FN_TABLE[1];", "const int FN_COUNT = 0;"]
     for k, (name, a) in enumerate(INSNS.items()):
         t = CODE + 32 * k
         i = prog.decode(a)
@@ -51,7 +51,7 @@ def main():
     (gen / "atomictest.c").write_text("\n".join(out) + "\n")
     exe = BUILD / "atomictest"
     subprocess.run(["clang", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", "-I", str(ROOT / "runtime"),
-                    str(ROOT / "runtime/atomic_test.c"), str(gen / "atomictest.c"), "-o", str(exe)], check=True)
+                    str(ROOT / "runtime/atomic_test.c"), str(ROOT / "runtime/rt.c"), str(gen / "atomictest.c"), "-o", str(exe)], check=True)
     sys.exit(subprocess.run([str(exe), str(args.threads), str(args.iters)]).returncode)
 
 
