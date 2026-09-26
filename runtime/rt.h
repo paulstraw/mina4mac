@@ -34,6 +34,10 @@ GuestFn rt_lookup(uint32_t addr);
 // Nonzero: log every host import call to stderr (dll!name, return address, the first stack arguments,
 // then eax/edx and the bytes popped on return). Set by the launcher from NOITAMAC_TRACE.
 extern int rt_trace;
+// NULL: trace every import; otherwise only those whose "dll!name" contains one of these comma-separated
+// substrings (case-insensitive). Set by the launcher from NOITAMAC_TRACE when it isn't "1".
+extern const char *rt_trace_filter;
+int rt_traced(const char *dll, const char *name);  // rt_trace, and dll!name passes rt_trace_filter
 
 // Count calls per import thunk (including GetProcAddress thunks) and write "calls<TAB>dll!name" for every
 // thunk to `path` at exit. Set by the launcher from NOITAMAC_COUNT_IMPORTS.

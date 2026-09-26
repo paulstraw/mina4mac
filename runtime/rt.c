@@ -108,7 +108,7 @@ GuestFn rt_lookup(uint32_t a) {
 // Import thunks. Thunks are created while binding (single-threaded startup); a host implementation is
 // looked up in the registry on a thunk's first call and cached.
 enum { MAX_THUNKS = 1 << 16, MAX_HOST_FNS = 1 << 12 };
-typedef struct { const char *dll, *name; GuestFn fn; } HostFn;
+typedef struct { const char *dll, *name; GuestFn fn; int traced; } HostFn;  // traced: thunks only
 static HostFn THUNKS[MAX_THUNKS];
 static int NTHUNKS;
 static HostFn HOST_FNS[MAX_HOST_FNS];
@@ -124,7 +124,7 @@ int rt_has_import(const char *dll, const char *name) { return find_host_fn(dll, 
 
 void rt_register_import(const char *dll, const char *name, GuestFn fn) {
     if (NHOST_FNS == MAX_HOST_FNS) { fprintf(stderr, "too many host functions\n"); exit(2); }
-    HOST_FNS[NHOST_FNS++] = (HostFn){dll, name, fn};
+    HOST_FNS[NHOST_FNS++] = (HostFn){dll, name, fn, 0};
 }
 
 // Thunks may also be created later, by GetProcAddress on any thread: creation is serialised, and a new
@@ -137,7 +137,7 @@ uint32_t rt_thunk(const char *dll, const char *name) {
     while (i < NTHUNKS && !(strcasecmp(THUNKS[i].dll, dll) == 0 && strcmp(THUNKS[i].name, name) == 0)) i++;
     if (i == NTHUNKS) {
         if (NTHUNKS == MAX_THUNKS) { fprintf(stderr, "too many import thunks\n"); exit(2); }
-        THUNKS[i] = (HostFn){strdup(dll), strdup(name), NULL};
+        THUNKS[i] = (HostFn){strdup(dll), strdup(name), NULL, rt_traced(dll, name)};
         __atomic_store_n(&NTHUNKS, i + 1, __ATOMIC_RELEASE);
     }
     pthread_mutex_unlock(&THUNKS_LOCK);
@@ -198,6 +198,21 @@ int rt_bind_imports(uint32_t base) {
 }
 
 int rt_trace;
+const char *rt_trace_filter;
+
+int rt_traced(const char *dll, const char *name) {
+    if (!rt_trace) return 0;
+    if (!rt_trace_filter) return 1;
+    char full[256];
+    snprintf(full, sizeof full, "%s!%s", dll, name);
+    for (const char *f = rt_trace_filter; *f;) {  // comma-separated substrings of dll!name
+        size_t n = strcspn(f, ",");
+        for (const char *p = full; *p; p++)
+            if (n && !strncasecmp(p, f, n)) return 1;
+        f += n + (f[n] == ',');
+    }
+    return 0;
+}
 
 // Per-thunk call counts, kept only after rt_count_imports; written as "calls<TAB>dll!name" lines at exit.
 static uint64_t CALLS[MAX_THUNKS];
@@ -238,13 +253,13 @@ static __attribute__((noinline)) void call_thunk(CPU *c, uint32_t target) {
     if (!f) {
         f = find_host_fn(t->dll, t->name);
         if (!f) {
-            if (rt_trace) trace_call(c, t, NULL);
+            if (t->traced) trace_call(c, t, NULL);
             fprintf(stderr, "unimplemented import %s!%s (called from %#x)\n", t->dll, t->name, rd32(c->esp));
             exit(4);
         }
         __atomic_store_n(&t->fn, f, __ATOMIC_RELEASE);
     }
-    if (rt_trace) trace_call(c, t, f);
+    if (t->traced) trace_call(c, t, f);
     else f(c);
 }
 

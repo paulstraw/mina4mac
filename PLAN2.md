@@ -151,8 +151,9 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Replace the no-context workaround in `opengl32.c`.
   - Add a gltest step with a hidden window: clear, draw a triangle and `glReadPixels` through the thunks.
   - `gen_gl.py` (run by build_all; gl.xml committed at `third_party/khronos/`, OpenGL-Registry @ 1cdd228e) bridges the 583 of noita.exe's 1,044 GL names that the SDK legacy headers declare → `build/gen_all/gl_gen.c` (575 generated, calls type-checked against the SDK prototypes; 8 hand-written in `runtime/opengl32.c`: GetString, ShaderSource, Map/UnmapBuffer + GetBufferPointerv shadow, MultiDrawElements*, DeleteSync; GLsync = guest handles; 40 array/element/pack/unpack pointer args become offsets while a buffer is bound). No-context no-op now lives in each thunk (`GL_CTX`, `opengl32.h`). `gl_proc_address`: GetProcAddress **and wglGetProcAddress** (the loader falls back to it on NULL, 922 calls) return NULL for the other 461. `runtime/gl_test.c` (gltest in check.sh, 43 checks, draws into an FBO); envtest links gl_gen.c. check.sh seed 4711 all ok; launcher again runs 300 s without stopping and the main menu renders (`build/gl_ingame.png`). Note the check.sh clicks miss New Game once a save exists ("Continue" shifts the menu).
-- [ ] First frame. Run until the main menu renders. Save `build/menu.png` with `tools/screenshot.sh` and
+- [x] First frame. Run until the main menu renders. Save `build/menu.png` with `tools/screenshot.sh` and
   fix blockers along the way (including C++ exceptions or `longjmp` if they're hit). Record the blockers.
+  - No new blockers: `tools/screenshot.sh build/menu.png 20` (under `caffeinate -u`) captures the full menu (logo, Continue…Quit). The blockers were fixed in earlier tasks (Phase 4 notes, 1aa439e, the GL bridge). C++ exceptions weren't hit; `longjmp` still exits 11 but isn't reached on the way to the menu.
 
 ### Phase 7: playable
 
@@ -170,13 +171,21 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     `lua_tointeger` used cvttsd2si semantics, so every color above 0x7fffffff became 0x80000000 and the
     registrations collided. The game's lua51.dll (0x10007d50) uses lj_num2bit (round to nearest even, wrap
     modulo 2^32); the bridge now does the same, with luatest cases. Playtest confirmed: the cart spawns and two Holy Mountains were complete (hearts, refresh, shop, wand editing, perks).
-  - **Bug: fullscreen → windowed.** Sequence: booted windowed (fine) → switched to fullscreen in options
-    (fine) → switched back to windowed (broken). The window comes back far too large and mostly black, with the game drawn
-    in the bottom-left corner and mouse coordinates offset from what's drawn. Suspects: the game sets the
-    size while the macOS fullscreen Space transition is still running (asynchronous on macOS, synchronous
-    on Windows), so the sizes it caches (window, drawable, GL viewport) disagree with the final window;
-    or a points vs. pixels (Retina) mismatch between `SDL_GetWindowSize` and the drawable size. Log the
-    SDL window, fullscreen and size calls and the `SDL_WINDOWEVENT`s around the toggle to find out which.
+  - **Fixed: fullscreen → windowed** came back as a huge, mostly black window with the game in the bottom-left
+    corner. The game calls `SDL_SetWindowSize(1280,720)`, then `SDL_SetWindowFullscreen(0)`, then sets glViewport
+    right away (0xdd7647/0xdd7654/0xdd7747). A macOS fullscreen Space leaves asynchronously and then restores its
+    own frame (2560x1322). sdl2.c now sets `SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES=0` (default priority), so
+    fullscreen is a synchronous borderless window, as on Windows. Confirmed in a user playtest (both directions,
+    including "Yes" to keep the settings). Diagnose such issues with `NOITAMAC_TRACE=SDL_SetWindow,SDL_WINDOWEVENT,glViewport`
+    (NOITAMAC_TRACE now takes comma-separated name filters; SDL_WINDOWEVENT logs events with window/drawable sizes).
+    Scripted clicks now hover 100 ms before pressing (dialog buttons ignored un-hovered presses). New Game with a
+    run in progress: `NOITAMAC_CLICKS="20:639,370;24:445,250;28:607,362"` (New Game, first mode, Yes).
+  - **Determinism: matches Wine.** `tools/determinism.sh` installs `tools/seedprint` (WORLD_SEED=123456789; writes
+    `seedprint.txt` with io, because release builds drop print() output even on Windows, so it needs the mod sandbox
+    off, which install/remove toggle). The seed, ProceduralRandomf/Randomf, and the 512x512 cell grid plus all
+    entities at spawn+60 and +600 frames are identical across one Wine and two noitamac runs. Spawn+1 differs
+    even between noitamac runs (chunk streaming timing). Lua libm: 2 of 25 values differ in the last bit
+    (sin(-2.5), exp(25.175)): the game's LuaJIT 2.0 uses x87 fsin/exp, ours uses the macOS libm. No visible effect.
     For a manual session: `caffeinate -u build/noitamac` (add `NOITAMAC_TRACE_LUA=1` for Lua loads and
     pcall errors; `longjmp` still exits 11, a sandboxed lib exits 10). Saves live under
     `~/Library/Application Support/noitamac/AppData/LocalLow/Nolla_Games_Noita/` (the loop enabled the

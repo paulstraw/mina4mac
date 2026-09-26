@@ -3,9 +3,11 @@
 // thunks), run the DLLs' entry points (DllMain) and then the exe's recompiled entry point.
 //   noitamac [args]     (game files from $NOITA_DIR, default build/game; args go to the game)
 //   NOITAMAC_TRACE=1    log every host import call to stderr
+//   NOITAMAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
 //   NOITAMAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "host.h"
@@ -27,7 +29,8 @@ int main(int argc, char **argv) {
     char path[4096];
     snprintf(path, sizeof path, "%s/noita.exe", dir);
     const char *trace = getenv("NOITAMAC_TRACE");
-    rt_trace = trace && *trace && *trace != '0';
+    rt_trace = trace && *trace && strcmp(trace, "0");
+    if (rt_trace && strcmp(trace, "1")) rt_trace_filter = trace;
     const char *counts = getenv("NOITAMAC_COUNT_IMPORTS");
     if (counts && *counts) rt_count_imports(counts);
 

@@ -204,6 +204,14 @@ HOST_CDECL(SDL2, SDL_FreeSurface) {  // void SDL_FreeSurface(SDL_Surface *surfac
     heap_free(px);
 }
 
+// Fullscreen as on Windows: the game leaves fullscreen with SDL_SetWindowSize then SDL_SetWindowFullscreen(0)
+// and sets its GL viewport right away. A macOS fullscreen Space leaves asynchronously and then restores its
+// own (screen-sized) frame, so the game drew 1280x720 into the corner of a huge window. Without Spaces,
+// SDL switches synchronously and restores the size the game asked for.
+__attribute__((constructor)) static void sdl_hints(void) {
+    SDL_SetHintWithPriority(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0", SDL_HINT_DEFAULT);
+}
+
 // SDL_Event is 56 bytes on both sides and most members are laid out identically; tools/gen_sdl.py checks
 // that the ones below are the only exceptions (they hold pointers).
 static void event_to_guest(SDL_Event *e, uint32_t g) {
@@ -236,7 +244,7 @@ static void event_to_guest(SDL_Event *e, uint32_t g) {
 
 // Scripted input for driving the game without a person (the game reads the mouse only through events):
 // NOITAMAC_CLICKS="t:x,y[;t:x,y...]" left-clicks at window point (x, y), t seconds after the first
-// SDL_PollEvent. The button is released 100 ms later, a few frames after it went down.
+// SDL_PollEvent: the pointer moves there, the button goes down 100 ms later and comes up 100 ms after that.
 static void scripted_input(void) {
     static const char *next;
     static uint32_t t0, up;  // up: when a pending click's release is due
@@ -249,6 +257,15 @@ static void scripted_input(void) {
     e.button.windowID = w ? SDL_GetWindowID(w) : 0;
     e.button.button = SDL_BUTTON_LEFT;
     static int x, y;
+    static uint32_t down;  // when a pending click's press is due (the pointer moves there a few frames earlier)
+    if (down) {
+        if (SDL_GetTicks() < down) return;
+        down = 0;
+        e.type = SDL_MOUSEBUTTONDOWN, e.button.x = x, e.button.y = y, e.button.state = SDL_PRESSED, e.button.clicks = 1;
+        SDL_PushEvent(&e);
+        up = SDL_GetTicks() + 100;
+        return;
+    }
     if (up) {
         if (SDL_GetTicks() < up) return;
         up = 0;
@@ -261,15 +278,26 @@ static void scripted_input(void) {
     next = strchr(next, ';') ? strchr(next, ';') + 1 : "";
     e.type = SDL_MOUSEMOTION, e.motion.x = x, e.motion.y = y;
     SDL_PushEvent(&e);
-    e.type = SDL_MOUSEBUTTONDOWN, e.button.x = x, e.button.y = y, e.button.state = SDL_PRESSED, e.button.clicks = 1;
-    SDL_PushEvent(&e);
-    up = SDL_GetTicks() + 100;
+    down = SDL_GetTicks() + 100;  // some widgets (dialog buttons) only take a press they were hovered before
+}
+
+// NOITAMAC_TRACE=...,SDL_WINDOWEVENT logs the window events the game receives, with the window's size,
+// drawable size and flags at that moment.
+static void trace_window_event(const SDL_Event *e) {
+    SDL_Window *w = SDL_GetWindowFromID(e->window.windowID);
+    int ww = 0, wh = 0, dw = 0, dh = 0;
+    if (w) SDL_GetWindowSize(w, &ww, &wh), SDL_GL_GetDrawableSize(w, &dw, &dh);
+    fprintf(stderr, "[sdl] %u SDL_WINDOWEVENT %d (%d, %d): window %dx%d, drawable %dx%d, flags %#x\n", SDL_GetTicks(),
+            e->window.event, e->window.data1, e->window.data2, ww, wh, dw, dh, w ? SDL_GetWindowFlags(w) : 0);
 }
 
 HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
     scripted_input();
     SDL_Event e;
+    static int trace = -1;
+    if (trace < 0) trace = rt_traced("SDL2", "SDL_WINDOWEVENT");
     int r = SDL_PollEvent(ARG(0) ? &e : NULL);
+    if (r && e.type == SDL_WINDOWEVENT && ARG(0) && trace) trace_window_event(&e);
     if (r && ARG(0)) event_to_guest(&e, ARG(0));
     ret_i32(c, r);
 }
