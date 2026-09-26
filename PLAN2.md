@@ -127,17 +127,19 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     - a JIT-hot loop
   - LuaJIT v2.1 @ c6ffc14 (`third_party/luajit`); build_all rsyncs it to `build/luajit/` and makes a static amalg lib (GC64, external unwinding); lua51.c needs `-fexceptions` (its trampoline restores ebx/esi/edi/ebp/esp/fs:[0]/x87 in a cleanup when a Lua error abandons guest frames, e.g. Lua `pcall` of guest code). Every lifted function has a compact-unwind entry. `rt_thread_cpu` (proc.h) is the per-thread CPU. Sandbox is per library: patched = its luaopen_* thunk holds `mov [0],0`; opening it or calling any wrapped C function then exits 10. Guest C++ destructors in abandoned frames don't run.
   - luatest (check.sh): 48 checks, JIT loop 1.7 ns/iter with traces, 36 ns per Lua→guest call. check.sh seed 27182 all ok. Launcher: 4 states, 20 chunks loaded, 13 lua_pcalls, then stops at `MSVCR120!??_V@YAXPAX@Z` (delete[]) from 0x8b0858.
-- [ ] Run until the game's Lua init finishes (built-in scripts and mod loading with the default mods).
+- [x] Run until the game's Lua init finishes (built-in scripts and mod loading with the default mods).
   Record which scripts ran, any API gaps, and where execution stops.
+  - Lua init completes; nothing stops. It was unblocked by 1aa439e (delete[], _setjmp3, GetSystemTime, ConcRT id, glPush/PopAttrib) and 4093f73 (lua_tointeger), and runs in-game (Holy Mountain at 90 s). Traced New Game run (`NOITAMAC_TRACE_LUA=1`, check.sh clicks, default mods, all disabled so no mod scripts; log `build/luainit.log`): about 160 states, 1182 chunk loads, 0 pcall errors, no unimplemented imports. First is `data/scripts/init.lua` (utilities, biome_modifiers), then per-state `data/scripts/biomes/*` (191), director_helpers (145), item_spawnlists/biome_scripts (122 each), lib (89), gun (84), perks, items, game_helpers, static_tile, streaming_integration, status_effects.
 
 ### Phase 6: OpenGL
 
-- [ ] GL survey, before writing the bridge.
+- [x] GL survey, before writing the bridge.
   - Count at runtime every GL name the game actually calls (the thunk path), not just the 1,037 it looks
     up.
   - Extract the shaders from `data.wak` (document the wak format in the note) and record their GLSL
     `#version`s and any fixed-function use.
   - Decide between the legacy 2.1 and the core 4.1 context. Record the list of names that macOS lacks.
+  - **Legacy 2.1.** `NOITAMAC_COUNT_IMPORTS=<file>` (new, rt.c) writes calls per thunk at exit; `uv run tools/glsurvey.py [file]` extracts shaders to `build/shaders/` and checks names against the SDK headers (gl.h+glext.h vs gl3.h+gl3ext.h). data.wak: header {0, count, table end, 0}, then per file {u32 offset, u32 size, u32 namelen, name}, then uncompressed data. All 23 shaders are `#version 110` (plus the included common.frag) and use gl_TexCoord/gl_FragColor/texture2D/gl_Color/gl_ModelViewMatrix/gl_MultiTexCoord; no GLSL in the exe. In a 150 s menu → New Game run, 50 of 1048 opengl32 thunks were called (+4 wgl*). Legacy lacks none of them, but core lacks 12 (client arrays, matrix stack, Push/PopAttrib, Ortho, Scalef). 461 looked-up names aren't in the legacy headers (mostly 3.x/4.x and DSA; see build/glsurvey.log). Options and fullscreen weren't exercised.
 - [ ] Generate the GL bridge (`tools/gen_gl.py` from `gl.xml`, output under `build/gen_all/`) for the
   names the survey found, all `__stdcall`.
   - Pointer arguments are guest pointers (`MEM + p`). But `gl*Pointer`, `glDrawElements` indices and

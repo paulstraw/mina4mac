@@ -35,6 +35,10 @@ GuestFn rt_lookup(uint32_t addr);
 // then eax/edx and the bytes popped on return). Set by the launcher from NOITAMAC_TRACE.
 extern int rt_trace;
 
+// Count calls per import thunk (including GetProcAddress thunks) and write "calls<TAB>dll!name" for every
+// thunk to `path` at exit. Set by the launcher from NOITAMAC_COUNT_IMPORTS.
+void rt_count_imports(const char *path);
+
 // Register the host implementation of dll!name (dll matched case-insensitively). May be called before
 // or after binding.
 void rt_register_import(const char *dll, const char *name, GuestFn fn);

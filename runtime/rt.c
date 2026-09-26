@@ -197,6 +197,24 @@ int rt_bind_imports(uint32_t base) {
 
 int rt_trace;
 
+// Per-thunk call counts, kept only after rt_count_imports; written as "calls<TAB>dll!name" lines at exit.
+static uint64_t CALLS[MAX_THUNKS];
+static const char *COUNT_PATH;
+
+static void write_counts(void) {
+    FILE *f = fopen(COUNT_PATH, "w");
+    if (!f) { perror(COUNT_PATH); return; }
+    for (int i = 0, n = __atomic_load_n(&NTHUNKS, __ATOMIC_ACQUIRE); i < n; i++)
+        fprintf(f, "%llu\t%s!%s\n", (unsigned long long)__atomic_load_n(&CALLS[i], __ATOMIC_RELAXED), THUNKS[i].dll,
+                THUNKS[i].name);
+    fclose(f);
+}
+
+void rt_count_imports(const char *path) {
+    COUNT_PATH = strdup(path);
+    atexit(write_counts);
+}
+
 static void trace_call(CPU *c, HostFn *t, GuestFn f) {
     uint32_t sp = c->esp;
     fprintf(stderr, "[import] %s!%s(%#x, %#x, %#x, %#x) from %#x\n", t->dll, t->name, rd32(sp + 4), rd32(sp + 8),
@@ -213,6 +231,7 @@ static __attribute__((noinline)) void call_thunk(CPU *c, uint32_t target) {
         exit(5);
     }
     HostFn *t = &THUNKS[i];
+    if (COUNT_PATH) __atomic_fetch_add(&CALLS[i], 1, __ATOMIC_RELAXED);
     GuestFn f = __atomic_load_n(&t->fn, __ATOMIC_ACQUIRE);
     if (!f) {
         f = find_host_fn(t->dll, t->name);
