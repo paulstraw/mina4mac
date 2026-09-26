@@ -1,0 +1,6 @@
+<Mod
+	name="perfbench"
+	description="noitamac performance benchmark: fixed WORLD_SEED, floods the start area with water, oil and lava, logs frame times (PERFBENCH lines) to perfbench.txt"
+	request_no_api_restrictions="1"
+>
+</Mod>

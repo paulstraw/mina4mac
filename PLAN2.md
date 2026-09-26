@@ -197,12 +197,13 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     or pixel data). Recompilation must not change world generation. Record any difference and its cause
     (for example host libm sin/cos/pow).
   - Record crashes and fixes.
-- [ ] Performance: the point of the project.
+- [x] Performance: the point of the project.
   - Measure FPS and frame time for a fixed scene under simulation load, natively and under the Sikarugir
     Wine build.
   - Profile with Instruments and fix the top hotspots. Likely candidates are `guest_call` lookups, GPR
     syncs around calls, x87 helpers and bridge overhead.
   - Record the before/after numbers.
+  - Wrapped up early at the user's request (finish the game first; deeper perf work later). `tools/perfbench.sh` + `tools/perfbench` mod (seed-pinned water/oil/lava flood, 1800 frames; `-gamemode 0` skips the menu; `UNCAPPED=1`). Native 55.7 fps capped / 57–65 uncapped; Wine 50.9 / 42.8. Profile (`sample`): `guest_call` ~15% of guest CPU, main thread ~21% in a `Sleep(0)` wait for 8 workers (~39% busy). Inlining guest_call at call sites was ~5% *slower* (A/B interleaved, +4 MB code), so it was reverted: no hotspot fix landed.
 - [ ] Memory ordering audit.
   - Plain loads and stores have ARM64 ordering, not x86 TSO. With about 18 guest threads that can break
     lock-free code that relies on TSO.
