@@ -227,13 +227,15 @@ Gotchas that already bit us:
   - Unit-test cdecl and stdcall paths.
   - `runtime/host.h`: `HOST_CDECL(dll, name)`, `HOST_STDCALL(dll, name, argbytes)`, `HOST(dll, id, "mangled", argbytes)` define a body `(CPU *c, uint32_t argp)` that self-registers via a constructor (dll token + ".dll"). The wrapper sets esp = entry+4+argbytes after the body, so bodies may push/call guest code. `ARG/ARG_I64/ARG_F32/ARG_F64/ARG_PTR/ARG_STR(n)` (n = 4-byte slot), `ret_i32/i64/f32/f64` (st0 push)/`ret_xmm0_f32/f64`.
   - `runtime/host_test.c` (hosttest step in check.sh): 16 checks incl. cdecl/stdcall esp, edx:eax, st0, xmm0, mangled name, host→guest callback. check.sh seed 8086: 97087 lifted; default 2246 / x87 145 pass, 0 fail/native_err; atomictest, importtest ok.
-- [ ] Guest process environment.
+- [x] Guest process environment.
   - A guest heap: a thread-safe allocator over a fixed guest range such as 0x20000000–0xE0000000, backing
     malloc/free/realloc/calloc/_aligned_malloc and HeapAlloc.
   - A 1 MB main-thread guest stack.
   - A TEB/PEB with fs:[0]=0xFFFFFFFF SEH chain, fs:[4]/[8] stack base/limit, fs:[0x18] self, fs:[0x2c]
     TLS array, fs:[0x30] PEB and thread id.
   - Record the memory map in `runtime/README.md`.
+  - `heap.c/h` (size classes + page spans, one os_unfair_lock, first-fit spans: fine for now), `proc.c/h` (`rt_process_init(exe_base)` sets PEB + static TLS index 0; `rt_thread_init(c)` gives slot n a guarded 1 MB stack, TEB, TLS block copy; TLS callbacks not run yet). HLE files `msvcr120.c`/`kernel32.c` now hold malloc/free/realloc/calloc/_msize/*_crt/_aligned_*/new/delete/Concurrency Alloc/Free and GetProcessHeap/Heap{Alloc,Free,ReAlloc,Size}; operator new OOM exits 6 (no bad_alloc), errno not set.
+  - `runtime/env_test.c` (envtest in check.sh, 48 checks incl. 8-thread hammer, guard fault, imports via thunks). check.sh seed 2718: 97087 lifted; default 2192 / x87 160 pass, 0 fail/native_err; all tests ok.
 - [ ] Add a `build/noitamac` launcher (`runtime/main.c`, linked with `build/gen_all` objects).
   - It maps `noita.exe` sections from `build/game/noita.exe` itself (not `image.bin`), sets up the process
     and calls the entry point 0xdfadb0.

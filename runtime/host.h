@@ -23,7 +23,7 @@
     __attribute__((constructor)) static void hostreg_##dll##_##id(void) {                            \
         rt_register_import(#dll ".dll", name, hostcall_##dll##_##id);                                \
     }                                                                                                \
-    static void host_##dll##_##id(CPU *c, __attribute__((unused)) uint32_t argp)
+    static void host_##dll##_##id(__attribute__((unused)) CPU *c, __attribute__((unused)) uint32_t argp)
 #define HOST_CDECL(dll, name) HOST(dll, name, #name, 0)
 #define HOST_STDCALL(dll, name, argbytes) HOST(dll, name, #name, argbytes)
 

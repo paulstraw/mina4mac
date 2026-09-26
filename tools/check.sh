@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
-# hosttest.
+# hosttest, envtest.
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest/hosttest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -69,6 +69,15 @@ if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I run
     echo "hosttest: ok $(grep -c ' ok ' "$LOG/hosttest.log") checks"
 else
     echo "hosttest: FAIL, see $LOG/hosttest.log"; status=1
+fi
+
+# envtest needs build/noita/image.bin, which difftest writes.
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/env_test.c runtime/rt.c \
+        runtime/heap.c runtime/proc.c runtime/msvcr120.c runtime/kernel32.c -o build/envtest >"$LOG/envtest.log" 2>&1 \
+        && build/envtest build/noita/image.bin >>"$LOG/envtest.log" 2>&1; then
+    echo "envtest: ok $(grep -c ' ok ' "$LOG/envtest.log") checks"
+else
+    echo "envtest: FAIL, see $LOG/envtest.log"; status=1
 fi
 
 exit $status
