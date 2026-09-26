@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pefile
 
-DEFAULT_GAME_DIR = Path.home() / "Applications/Noita Sikarugir.app/Contents/SharedSupport/prefix/drive_c/GOG Games/Noita"
+# Gitignored copy of the game binaries from the user's own install (see PLAN.md).
+DEFAULT_GAME_DIR = Path(__file__).parent.parent / "build/game"
 
 
 def game_dir() -> Path:
