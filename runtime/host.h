@@ -46,3 +46,17 @@ static inline void ret_f64(CPU *c, double v) { st_push(c, v); }
 static inline void ret_f32(CPU *c, float v) { st_push(c, v); }
 static inline void ret_xmm0_f64(CPU *c, double v) { c->xmm[0] = (Xmm){.f64 = {v, 0}}; }
 static inline void ret_xmm0_f32(CPU *c, float v) { c->xmm[0] = (Xmm){.f32 = {v, 0, 0, 0}}; }
+
+// Call guest function `fn` from a host body with `n` 4-byte stack arguments (args[0] pushed last, so it
+// ends up at [esp+4]) and a dummy return address. Works for cdecl and stdcall callees: esp is restored
+// afterwards either way. Returns eax.
+#define GUEST_RET 0x0badc0deu
+static inline uint32_t call_guest(CPU *c, uint32_t fn, int n, const uint32_t *args) {
+    uint32_t sp = c->esp;
+    for (int i = n - 1; i >= 0; i--) { c->esp -= 4; wr32(c->esp, args[i]); }
+    c->esp -= 4;
+    wr32(c->esp, GUEST_RET);
+    guest_call(c, fn);
+    c->esp = sp;
+    return c->eax;
+}

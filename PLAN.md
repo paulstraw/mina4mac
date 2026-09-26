@@ -243,10 +243,12 @@ Gotchas that already bit us:
   - Expected result: it aborts at the first unimplemented import. Record the trace in the note.
   - `rt_map_pe(path, base)` (rt.c; headers + sections + HIGHLOW relocs, returns entry) and `rt_trace` (logs `[import] dll!name(4 stack args) from ret` / `-> eax edx popped N`); build_all links `build/noitamac` with main/heap/proc/msvcr120/kernel32. `tools/loadtest.py` + `runtime/load_test.c` (in check.sh): all 8 modules byte-identical to pe.py's image. check.sh also prints where the launcher stops.
   - Trace: `bound 635 import slots, entry 0xdfadb0` → `KERNEL32.dll!GetSystemTimeAsFileTime(0x1a10ffe8, …) from 0xdfb1fb` → unimplemented, exit 4 (first call of `__security_init_cookie`). check.sh seed 1618: 97087 lifted; default 2280 / x87 160 pass, 0 fail/native_err; all tests ok.
-- [ ] Implement KERNEL32/MSVCR120 imports until CRT startup reaches `_initterm`, including
+- [x] Implement KERNEL32/MSVCR120 imports until CRT startup reaches `_initterm`, including
   `__security_init_cookie`'s time/pid/tid/counter calls and `__set_app_type`, `_controlfp_s` and friends.
   `_initterm` calls guest function pointers via `guest_call`. Record the imports implemented and where
   execution stops.
+  - Implemented: KERNEL32 GetSystemTimeAsFileTime, QueryPerformanceCounter/Frequency (ns), GetCurrentThreadId/ProcessId, Get/SetLastError, Encode/DecodePointer (identity), IsProcessorFeaturePresent, IsDebuggerPresent; MSVCR120 __crtGetShowWindowMode, _initterm(_e), __set_app_type, __setusermatherr, __crtSetUnhandledExceptionFilter, _controlfp_s (maps to fpu_cw; only RC takes effect), _configthreadlocale, __getmainargs, _ismbblead, _lock/_unlock, _onexit (the exe's atexit uses it), exit/_exit/_cexit, _amsg_exit. Data imports `_acmdln`/`_fmode`/`_commode` live in their thunk's 16 bytes, set by `crt_init` (`msvcr120.h`, called by main.c; launcher args go to the game). `call_guest` (host.h) calls guest code from host bodies.
+  - Stops inside `_initterm(0xf05a2c, 0xf06684)` (790 C++ initializers) after 5 `_onexit` registrations: `MSVCR120!type_info::name` from 0x442b6e, exit 4. envtest 69 checks (new: argv/_acmdln, _initterm(_e), _onexit order, _controlfp_s, time/ids). check.sh seed 1414: 97087 lifted; default 2216 / x87 162 pass, 0 fail/native_err; all tests ok.
 - [ ] Run until all C++ static initializers (the `_initterm` tables) complete. Implement the msvcr120
   imports they hit, and recompile or implement the msvcp120 ones according to the Phase 1 decision. Record
   which initializers were problematic.

@@ -15,7 +15,7 @@ The guest address space is one 4 GB host mapping (`MEM`, `rt_init`); guest addre
 | `0x1F800000` | PEB | `proc.h` |
 | `0x1F810000` | process heap handle (a handle only; nothing is mapped there) | `proc.h` |
 | `0x20000000`–`0xDFFFFFFF` | guest heap (3 GB) | `heap.h` |
-| `0xF0000000`+ | host function thunks, 16 bytes apart (no code, looked up by `guest_call`) | `rt.h` |
+| `0xF0000000`+ | host function thunks, 16 bytes apart (no code, looked up by `guest_call`); a data import (`_acmdln`, `_fmode`, `_commode`) is stored in its thunk's 16 bytes | `rt.h`, `msvcr120.c` |
 
 Thread n (0 = main) has thread id `0x104 + 4n` in process `0x100`. Its TEB has `fs:[0]` = `0xFFFFFFFF`,
 `fs:[4]`/`fs:[8]` = stack top/bottom, `fs:[0x18]` = itself, `fs:[0x2c]` = its TLS array (slot 0 = its copy of
@@ -31,5 +31,5 @@ the exe's static TLS block, allocated on the guest heap), `fs:[0x30]` = the PEB,
 | `host.h` | `HOST_CDECL`/`HOST_STDCALL`/`HOST` declarations and argument/return helpers for host imports |
 | `heap.c`/`heap.h` | the guest heap allocator |
 | `proc.c`/`proc.h` | PEB, thread stacks, TEBs and static TLS |
-| `msvcr120.c`, `kernel32.c` | native (HLE) implementations of those DLLs' imports |
+| `msvcr120.c`, `kernel32.c` | native (HLE) implementations of those DLLs' imports; `msvcr120.h` has `crt_init` (command line, data imports) |
 | `*_test.c`, `harness.c`, `bench.c` | tests and benchmarks, run by `tools/check.sh` |

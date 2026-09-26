@@ -1,6 +1,7 @@
 // Guest process environment test (built and run by tools/check.sh): the guest heap directly, from many
 // host threads, and through the MSVCR120/KERNEL32 imports; then the PEB, main-thread TEB, stack and
-// static TLS set up for noita.exe.
+// static TLS set up for noita.exe; then the CRT startup imports (command line, initializer tables,
+// exit handlers, _controlfp_s) and the KERNEL32 identity/time imports it calls.
 //   env_test <noita image.bin>
 #include <pthread.h>
 #include <signal.h>
@@ -12,10 +13,23 @@
 
 #include "heap.h"
 #include "host.h"
+#include "msvcr120.h"
 #include "proc.h"
 
-const FnEntry FN_TABLE[1];
-const int FN_COUNT = 0;
+// "Recompiled" guest functions for the initializer tables and exit handlers: each appends its tag to
+// CALLS and returns (cdecl, no args) 0, except G_SEVEN which returns 7.
+enum { G_A = 0x300000, G_B = 0x300010, G_SEVEN = 0x300020 };
+static char CALLS[16];
+static void guest_log(CPU *c, char tag, uint32_t r) {
+    CALLS[strlen(CALLS)] = tag;
+    c->eax = r;
+    c->esp += 4;
+}
+static void F_a(CPU *c) { guest_log(c, 'a', 0); }
+static void F_b(CPU *c) { guest_log(c, 'b', 0); }
+static void F_seven(CPU *c) { guest_log(c, '7', 7); }
+const FnEntry FN_TABLE[] = {{G_A, F_a}, {G_B, F_b}, {G_SEVEN, F_seven}};
+const int FN_COUNT = 3;
 
 enum { EXE_BASE = 0x400000, RET_ADDR = 0x0badf000, THREADS = 8, ITERS = 200000, LIVE_MAX = 256 };
 
@@ -181,5 +195,55 @@ int main(int argc, char **argv) {
     CHECK("HeapReAlloc IN_PLACE fails", K32("HeapReAlloc", PROCESS_HEAP, 0x10, h2, 100000), 0);
     CHECK("HeapSize", K32("HeapSize", PROCESS_HEAP, 0, h2), 128);
     CHECK("HeapFree", K32("HeapFree", PROCESS_HEAP, 0, h2) == 1 && !heap_owns(h2), 1);
+
+    // CRT startup.
+    crt_init(3, (char *[]){"noitamac", "-x", "a b", NULL});
+    uint32_t pargc = heap_alloc(12), pargv = pargc + 4, penv = pargc + 8;
+    CHECK("__getmainargs", CRT("__getmainargs", pargc, pargv, penv, 0, 0), 0);
+    uint32_t av = rd32(pargv);
+    CHECK("argc/argv", rd32(pargc) == 3 && !strcmp((char *)P(rd32(av)), "noita.exe")
+          && !strcmp((char *)P(rd32(av + 4)), "-x") && !strcmp((char *)P(rd32(av + 8)), "a b") && !rd32(av + 12), 1);
+    CHECK("envp empty", rd32(rd32(penv)), 0);
+    CHECK("_acmdln", strcmp((char *)P(rd32(rt_thunk("MSVCR120.dll", "_acmdln"))), "\"noita.exe\" -x \"a b\""), 0);
+    uint32_t tab = heap_calloc(4, 4);
+    wr32(tab, G_A); wr32(tab + 8, G_B);
+    CRT("_initterm", tab, tab + 16);
+    CHECK("_initterm: skips nulls", strcmp(CALLS, "ab"), 0);
+    memset(CALLS, 0, sizeof CALLS);
+    wr32(tab + 4, G_SEVEN);
+    CHECK("_initterm_e: result", CRT("_initterm_e", tab, tab + 16), 7);
+    CHECK("_initterm_e: stops at non-zero", strcmp(CALLS, "a7"), 0);
+    memset(CALLS, 0, sizeof CALLS);
+    CRT("_onexit", G_A); CRT("_onexit", G_B);
+    CRT("_cexit");
+    CHECK("_onexit/_cexit: reverse order", strcmp(CALLS, "ba"), 0);
+    uint32_t cw = heap_alloc(4);
+    CRT("_controlfp_s", cw, 0x300, 0x300);  // _RC_CHOP
+    CHECK("_controlfp_s: chop", c.fpu_cw, 0xe7f);
+    CHECK("_controlfp_s: current", rd32(cw), 0x9031f);  // all masked, _PC_53, _RC_CHOP
+    CRT("_controlfp_s", 0, 0x20100, 0x30300);  // _PC_24, _RC_DOWN
+    CHECK("_controlfp_s: pc24 down", c.fpu_cw, 0x47f);
+    CRT("_controlfp_s", cw, 0, 0);
+    CHECK("_controlfp_s: read only", rd32(cw) == 0xa011f && c.fpu_cw == 0x47f, 1);
+    CRT("_controlfp_s", 0, 0x10000, 0x30300);
+    CHECK("_controlfp_s: back to default", c.fpu_cw, 0x27f);
+
+    // KERNEL32 identity and time.
+    CHECK("GetCurrentThreadId", K32("GetCurrentThreadId"), GUEST_PID + 4);
+    CHECK("GetCurrentProcessId", K32("GetCurrentProcessId"), GUEST_PID);
+    K32("SetLastError", 1234);
+    CHECK("Set/GetLastError", K32("GetLastError"), 1234);
+    CHECK("SetLastError: stdcall pops 4", call(&c, "KERNEL32.dll", "SetLastError", 1, (uint32_t[]){0}), c.esp);
+    CHECK("Encode/DecodePointer", K32("DecodePointer", K32("EncodePointer", 0x12345678)), 0x12345678);
+    CHECK("IsProcessorFeaturePresent SSE2/3DNow", K32("IsProcessorFeaturePresent", 10) * 2
+          + K32("IsProcessorFeaturePresent", 7), 2);
+    uint32_t t = heap_alloc(16);
+    K32("GetSystemTimeAsFileTime", t);
+    CHECK("FILETIME after 2020", rd64(t) > 132223104000000000ull, 1);  // 2020-01-01
+    K32("QueryPerformanceFrequency", t);
+    uint64_t freq = rd64(t);
+    K32("QueryPerformanceCounter", t); usleep(2000); K32("QueryPerformanceCounter", t + 8);
+    uint64_t dt = (rd64(t + 8) - rd64(t)) * 1000 / freq;  // ms
+    CHECK("QueryPerformanceCounter ~2 ms", dt >= 2 && dt < 100, 1);
     return fails != 0;
 }
