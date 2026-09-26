@@ -13,6 +13,12 @@ void rt_init(void);
 // Copy a flat memory image file to guest address `base`. Exits on failure.
 void rt_load_image(const char *path, uint32_t base);
 
+// Map a PE32 file into guest memory at `base`, as the Windows loader would: headers and each section at
+// its RVA (zero fill beyond raw data comes from the zeroed mapping), with base relocations applied if
+// `base` differs from the preferred ImageBase. Returns the guest address of the entry point. Exits on
+// failure. Imports are not bound (see rt_bind_imports).
+uint32_t rt_map_pe(const char *path, uint32_t base);
+
 // Recompiled function starting at guest address `addr`, or NULL. O(1): a two-level table indexed by
 // addr >> 12, whose second-level pages are built from FN_TABLE on first use.
 GuestFn rt_lookup(uint32_t addr);
@@ -24,6 +30,10 @@ GuestFn rt_lookup(uint32_t addr);
 // printing dll!name and the guest return address.
 #define THUNK_BASE 0xF0000000u
 #define THUNK_STRIDE 16u
+
+// Nonzero: log every host import call to stderr (dll!name, return address, the first stack arguments,
+// then eax/edx and the bytes popped on return). Set by the launcher from NOITAMAC_TRACE.
+extern int rt_trace;
 
 // Register the host implementation of dll!name (dll matched case-insensitively). May be called before
 // or after binding.

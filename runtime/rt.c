@@ -22,6 +22,49 @@ void rt_load_image(const char *path, uint32_t base) {
     fclose(f);
 }
 
+uint32_t rt_map_pe(const char *path, uint32_t base) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { perror(path); exit(2); }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    uint8_t *file = malloc(size);
+    rewind(f);
+    if (!file || fread(file, 1, size, f) != (size_t)size) { perror(path); exit(2); }
+    fclose(f);
+#define F32(o) (*(u32u *)(file + (o)))
+#define F16(o) (*(u16u *)(file + (o)))
+    uint32_t nt = size > 0x40 ? F32(0x3c) : 0;
+    if (nt + 0xf8 > (uint32_t)size || F32(nt) != 0x4550 || F16(nt + 24) != 0x10b) {
+        fprintf(stderr, "%s: not a PE32 image\n", path);
+        exit(2);
+    }
+    uint32_t opt = nt + 24, pref = F32(opt + 28), headers = F32(opt + 60), entry = F32(opt + 16);
+    memcpy(MEM + base, file, headers);
+    uint32_t sec = opt + F16(nt + 20);
+    for (int i = 0; i < F16(nt + 6); i++, sec += 40) {  // IMAGE_SECTION_HEADER
+        uint32_t va = F32(sec + 12), vsize = F32(sec + 8), raw = F32(sec + 16), off = F32(sec + 20);
+        uint32_t n = raw < vsize || !vsize ? raw : vsize;
+        if ((uint64_t)off + n > (uint64_t)size) { fprintf(stderr, "%s: truncated section\n", path); exit(2); }
+        memcpy(MEM + base + va, file + off, n);
+    }
+#undef F32
+#undef F16
+    free(file);
+    uint32_t delta = base - pref, rva = rd32(base + opt + 96 + 8 * 5), rsize = rd32(base + opt + 96 + 8 * 5 + 4);
+    if (delta && !rva) { fprintf(stderr, "%s: no relocations, can't load at %#x\n", path, base); exit(2); }
+    for (uint32_t b = base + rva, end = b + rsize; delta && b < end;) {  // IMAGE_BASE_RELOCATION blocks
+        uint32_t page = base + rd32(b), bsize = rd32(b + 4);
+        if (bsize < 8) break;
+        for (uint32_t k = 8; k < bsize; k += 2) {
+            uint16_t e = rd16(b + k);
+            if (e >> 12 == 3) wr32(page + (e & 0xfff), rd32(page + (e & 0xfff)) + delta);  // HIGHLOW
+            else if (e >> 12) { fprintf(stderr, "%s: relocation type %d\n", path, e >> 12); exit(2); }
+        }
+        b += bsize;
+    }
+    return base + entry;
+}
+
 // Function lookup. Pages are built lazily (~2.5k of them cover noita.exe at 32 KB each, so building
 // all up front would cost ~80 MB) and published with a CAS, so concurrent first lookups are safe.
 enum { PAGE_BITS = 12, PAGE_FNS = 1 << PAGE_BITS, NPAGES = 1 << (32 - PAGE_BITS) };
@@ -112,6 +155,17 @@ int rt_bind_imports(uint32_t base) {
     return n;
 }
 
+int rt_trace;
+
+static void trace_call(CPU *c, HostFn *t, GuestFn f) {
+    uint32_t sp = c->esp;
+    fprintf(stderr, "[import] %s!%s(%#x, %#x, %#x, %#x) from %#x\n", t->dll, t->name, rd32(sp + 4), rd32(sp + 8),
+            rd32(sp + 12), rd32(sp + 16), rd32(sp));
+    if (!f) return;
+    f(c);
+    fprintf(stderr, "[import] %s!%s -> eax=%#x edx=%#x popped %u\n", t->dll, t->name, c->eax, c->edx, c->esp - sp);
+}
+
 static __attribute__((noinline)) void call_thunk(CPU *c, uint32_t target) {
     uint32_t i = (target - THUNK_BASE) / THUNK_STRIDE;
     if (target < THUNK_BASE || (target - THUNK_BASE) % THUNK_STRIDE || i >= (uint32_t)NTHUNKS) {
@@ -123,12 +177,14 @@ static __attribute__((noinline)) void call_thunk(CPU *c, uint32_t target) {
     if (!f) {
         f = find_host_fn(t->dll, t->name);
         if (!f) {
+            if (rt_trace) trace_call(c, t, NULL);
             fprintf(stderr, "unimplemented import %s!%s (called from %#x)\n", t->dll, t->name, rd32(c->esp));
             exit(4);
         }
         __atomic_store_n(&t->fn, f, __ATOMIC_RELEASE);
     }
-    f(c);
+    if (rt_trace) trace_call(c, t, f);
+    else f(c);
 }
 
 void guest_call(CPU *c, uint32_t target) {

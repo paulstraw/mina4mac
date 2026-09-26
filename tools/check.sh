@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
-# hosttest, envtest.
+# hosttest, envtest, loadtest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -79,5 +79,14 @@ if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I run
 else
     echo "envtest: FAIL, see $LOG/envtest.log"; status=1
 fi
+
+if uv run tools/loadtest.py >"$LOG/loadtest.log" 2>&1; then
+    echo "loadtest: ok $(grep -c ' 0 differ' "$LOG/loadtest.log") modules"
+else
+    echo "loadtest: FAIL, see $LOG/loadtest.log"; status=1
+fi
+
+build/noitamac >"$LOG/launcher.log" 2>&1
+echo "launcher: exit $?, $(tail -1 "$LOG/launcher.log")"
 
 exit $status

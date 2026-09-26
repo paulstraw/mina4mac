@@ -26,7 +26,8 @@ the exe's static TLS block, allocated on the guest heap), `fs:[0x30]` = the PEB,
 | File | What |
 |---|---|
 | `cpu.h` | `CPU`, guest memory accessors and the x87/SSE/atomic helpers used by generated code |
-| `rt.c`/`rt.h` | memory setup, image loading, function lookup, import thunks, `guest_call` |
+| `main.c` | the launcher, `build/noitamac`: maps `noita.exe`, sets up the process and runs the entry point |
+| `rt.c`/`rt.h` | memory setup, PE mapping (`rt_map_pe`), function lookup, import thunks and tracing, `guest_call` |
 | `host.h` | `HOST_CDECL`/`HOST_STDCALL`/`HOST` declarations and argument/return helpers for host imports |
 | `heap.c`/`heap.h` | the guest heap allocator |
 | `proc.c`/`proc.h` | PEB, thread stacks, TEBs and static TLS |

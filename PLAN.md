@@ -236,11 +236,13 @@ Gotchas that already bit us:
   - Record the memory map in `runtime/README.md`.
   - `heap.c/h` (size classes + page spans, one os_unfair_lock, first-fit spans: fine for now), `proc.c/h` (`rt_process_init(exe_base)` sets PEB + static TLS index 0; `rt_thread_init(c)` gives slot n a guarded 1 MB stack, TEB, TLS block copy; TLS callbacks not run yet). HLE files `msvcr120.c`/`kernel32.c` now hold malloc/free/realloc/calloc/_msize/*_crt/_aligned_*/new/delete/Concurrency Alloc/Free and GetProcessHeap/Heap{Alloc,Free,ReAlloc,Size}; operator new OOM exits 6 (no bad_alloc), errno not set.
   - `runtime/env_test.c` (envtest in check.sh, 48 checks incl. 8-thread hammer, guard fault, imports via thunks). check.sh seed 2718: 97087 lifted; default 2192 / x87 160 pass, 0 fail/native_err; all tests ok.
-- [ ] Add a `build/noitamac` launcher (`runtime/main.c`, linked with `build/gen_all` objects).
+- [x] Add a `build/noitamac` launcher (`runtime/main.c`, linked with `build/gen_all` objects).
   - It maps `noita.exe` sections from `build/game/noita.exe` itself (not `image.bin`), sets up the process
     and calls the entry point 0xdfadb0.
   - `NOITAMAC_TRACE=1` logs every host import call (name, args, return).
   - Expected result: it aborts at the first unimplemented import. Record the trace in the note.
+  - `rt_map_pe(path, base)` (rt.c; headers + sections + HIGHLOW relocs, returns entry) and `rt_trace` (logs `[import] dll!name(4 stack args) from ret` / `-> eax edx popped N`); build_all links `build/noitamac` with main/heap/proc/msvcr120/kernel32. `tools/loadtest.py` + `runtime/load_test.c` (in check.sh): all 8 modules byte-identical to pe.py's image. check.sh also prints where the launcher stops.
+  - Trace: `bound 635 import slots, entry 0xdfadb0` → `KERNEL32.dll!GetSystemTimeAsFileTime(0x1a10ffe8, …) from 0xdfb1fb` → unimplemented, exit 4 (first call of `__security_init_cookie`). check.sh seed 1618: 97087 lifted; default 2280 / x87 160 pass, 0 fail/native_err; all tests ok.
 - [ ] Implement KERNEL32/MSVCR120 imports until CRT startup reaches `_initterm`, including
   `__security_init_cookie`'s time/pid/tid/counter calls and `__set_app_type`, `_controlfp_s` and friends.
   `_initterm` calls guest function pointers via `guest_call`. Record the imports implemented and where
