@@ -280,19 +280,42 @@ HOST_CDECL(lua51, lua_pushcclosure) {
     lua_insert(L, -n - 1);
     lua_pushcclosure(L, trampoline, n + 1);
 }
+// NOITAMAC_TRACE_LUA=1 logs every chunk the guest loads and every error lua_pcall returns.
+static int trace_lua(void) {
+    static int t = -1;
+    if (t < 0) t = getenv("NOITAMAC_TRACE_LUA") && *getenv("NOITAMAC_TRACE_LUA") != '0';
+    return t;
+}
+static int traced_load(lua_State *L, int r, const char *name, size_t size) {
+    if (trace_lua())
+        fprintf(stderr, "[lua] %p load %.100s (%zu bytes)%s%s\n", (void *)L, name ? name : "?", size, r ? ": " : "",
+                r ? lua_tostring(L, -1) : "");
+    return r;
+}
+
 HOST_CDECL(lua51, lua_call) { lua_call(LS(0), INT(1), INT(2)); }
 HOST_CDECL(lua51, lua_pcall) {
     Saved s = save(c);
-    int r = lua_pcall(LS(0), INT(1), INT(2), IX(3));
+    lua_State *L = LS(0);
+    int r = lua_pcall(L, INT(1), INT(2), IX(3));
     if (r) restore(&s);
+    if (r && trace_lua()) {
+        const char *msg = lua_tostring(L, -1);
+        fprintf(stderr, "[lua] %p pcall error %d: %s\n", (void *)L, r, msg ? msg : "(not a string)");
+    }
     ret_i32(c, r);
 }
 HOST_CDECL(lua51, lua_error) { lua_error(LS(0)); }
-HOST_CDECL(lua51, luaL_loadstring) { ret_i32(c, luaL_loadstring(LS(0), ARG_STR(1))); }
-HOST_CDECL(lua51, luaL_loadbufferx) {  // (L, buff, size, name, mode)
-    ret_i32(c, luaL_loadbufferx(LS(0), ARG_STR(1), ARG(2), ARG_STR(3), ARG_STR(4)));
+HOST_CDECL(lua51, luaL_loadstring) {
+    const char *s = ARG_STR(1);
+    ret_i32(c, traced_load(LS(0), luaL_loadstring(LS(0), s), s, strlen(s)));
 }
-HOST_CDECL(lua51, luaL_loadbuffer) { ret_i32(c, luaL_loadbuffer(LS(0), ARG_STR(1), ARG(2), ARG_STR(3))); }
+HOST_CDECL(lua51, luaL_loadbufferx) {  // (L, buff, size, name, mode)
+    ret_i32(c, traced_load(LS(0), luaL_loadbufferx(LS(0), ARG_STR(1), ARG(2), ARG_STR(3), ARG_STR(4)), ARG_STR(3), ARG(2)));
+}
+HOST_CDECL(lua51, luaL_loadbuffer) {
+    ret_i32(c, traced_load(LS(0), luaL_loadbuffer(LS(0), ARG_STR(1), ARG(2), ARG_STR(3)), ARG_STR(3), ARG(2)));
+}
 
 // Stack.
 HOST_CDECL(lua51, lua_gettop) { ret_i32(c, lua_gettop(LS(0))); }

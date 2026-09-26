@@ -100,6 +100,8 @@ HOST(msvcr120, get_concurrency, "?_GetConcurrency@details@Concurrency@@YAIXZ", 0
 HOST(msvcr120, num_vprocs, "?GetNumberOfVirtualProcessors@CurrentScheduler@Concurrency@@SAIXZ", 0) {
     ret_i32(c, ncpu());
 }
+// No thread is attached to a ConcRT scheduler: the id is -1 (spin-waits then yield with msvcp _Thrd_yield).
+HOST(msvcr120, current_scheduler_id, "?_Id@_CurrentScheduler@details@Concurrency@@SAIXZ", 0) { ret_i32(c, 0xffffffff); }
 HOST(msvcr120, ctx_yield, "?_Yield@_Context@details@Concurrency@@SAXXZ", 0) { sched_yield(); }
 HOST(msvcr120, underlying_yield, "?_UnderlyingYield@details@Concurrency@@YAXXZ", 0) { sched_yield(); }
 HOST(msvcr120, concrt_wait, "?wait@Concurrency@@YAXI@Z", 0) { usleep(ARG(0) * 1000); }  // (ms)

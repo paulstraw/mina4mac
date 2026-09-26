@@ -40,8 +40,26 @@ static uint32_t op_new(uint32_t size) {
 }
 HOST(msvcr120, op_new, "??2@YAPAXI@Z", 0) { ret_i32(c, op_new(ARG(0))); }
 HOST(msvcr120, op_delete, "??3@YAXPAX@Z", 0) { heap_free(ARG(0)); }
+HOST(msvcr120, op_new_array, "??_U@YAPAXI@Z", 0) { ret_i32(c, op_new(ARG(0))); }
+HOST(msvcr120, op_delete_array, "??_V@YAXPAX@Z", 0) { heap_free(ARG(0)); }
 HOST(msvcr120, concrt_alloc, "?Alloc@Concurrency@@YAPAXI@Z", 0) { ret_i32(c, op_new(ARG(0))); }
 HOST(msvcr120, concrt_free, "?Free@Concurrency@@YAXPAX@Z", 0) { heap_free(ARG(0)); }
+
+// setjmp/longjmp (libpng/libjpeg-style error paths). _setjmp3(buf, count, ...) fills the MSVC _JUMP_BUFFER
+// (Ebp, Ebx, Edi, Esi, Esp, Eip, Registration, TryLevel, Cookie "VC20") and returns 0. Resuming at the
+// setjmp from a longjmp needs lifter support (the setjmp caller's host frame), so longjmp exits for now.
+HOST_CDECL(msvcr120, _setjmp3) {
+    uint32_t b = ARG(0);
+    uint32_t v[9] = {c->ebp, c->ebx, c->edi, c->esi, argp, rd32(argp - 4), rd32(c->fs_base + TEB_EXCEPTION_LIST),
+                     0xffffffff, 0x56433230};
+    for (int i = 0; i < 9; i++) wr32(b + 4 * i, v[i]);
+    ret_i32(c, 0);
+}
+HOST_CDECL(msvcr120, longjmp) {
+    fprintf(stderr, "longjmp(%#x, %d) called from %#x back to the setjmp at %#x: not supported yet\n", ARG(0),
+            (int)ARG(1), rd32(argp - 4), rd32(ARG(0) + 20));
+    exit(11);
+}
 
 // CRT startup (crtexe.c/crt0dat.c): the command line, the initializer tables and the exit path.
 // Data imports (_acmdln, _fmode, _commode) live in their thunk's 16 bytes of guest memory: the IAT slot

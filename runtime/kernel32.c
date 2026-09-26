@@ -85,6 +85,13 @@ HOST_STDCALL(kernel32, GetLocalTime, 4) {
     localtime_r(&ts.tv_sec, &tm);
     wr_systemtime(ARG(0), &tm, ts.tv_nsec / 1000000);
 }
+HOST_STDCALL(kernel32, GetSystemTime, 4) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    gmtime_r(&ts.tv_sec, &tm);
+    wr_systemtime(ARG(0), &tm, ts.tv_nsec / 1000000);
+}
 // Only the host's current time zone (a NULL TIME_ZONE_INFORMATION) is supported.
 HOST_STDCALL(kernel32, SystemTimeToTzSpecificLocalTime, 12) {
     uint32_t u = ARG(1);
