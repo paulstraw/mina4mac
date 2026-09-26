@@ -336,7 +336,14 @@ HOST_CDECL(lua51, lua_isnumber) { ret_i32(c, lua_isnumber(LS(0), IX(1))); }
 HOST_CDECL(lua51, lua_toboolean) { ret_i32(c, lua_toboolean(LS(0), IX(1))); }
 HOST_CDECL(lua51, lua_tonumber) { ret_f64(c, lua_tonumber(LS(0), IX(1))); }
 // 32-bit lua_Integer: LuaJIT 2.0 on x86 converts with a truncating cvttsd2si (0x80000000 if out of range).
-HOST_CDECL(lua51, lua_tointeger) { ret_i32(c, cvtt_f64_i32(lua_tonumber(LS(0), IX(1)))); }
+// The game's x86 lua51.dll converts with lj_num2bit: add 2^52+2^51 and keep the low 32 bits, i.e. round to
+// nearest even and wrap modulo 2^32 (spawn-function colors like 0xff6d934c depend on the wrap).
+HOST_CDECL(lua51, lua_tointeger) {
+    double n = lua_tonumber(LS(0), IX(1)) + 6755399441055744.0;
+    uint64_t bits;
+    memcpy(&bits, &n, 8);
+    ret_i32(c, (uint32_t)bits);
+}
 HOST_CDECL(lua51, lua_tolstring) {  // (L, idx, size_t *len)
     size_t len = 0;
     const char *s = lua_tolstring(LS(0), IX(1), &len);

@@ -154,6 +154,31 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
 ### Phase 7: playable
 
 - [ ] Play a run.
+  - 2026-09-26, user playtest (the loop's launches, no timeout needed): the first level is playable. Moving,
+    shooting and killing enemies work, it felt smooth with no slowdown, and no crash was seen (the run ended
+    because the agent killed the process). Second session: Continue works (it restored a player made by
+    the `starting_loadouts` mod, correctly), the mod's Lua and custom player sprite work, death → progress
+    screen → death menu → new game works, windowed → fullscreen works, and SIGTERM exits 0 after the game
+    saves its config. Not yet reached: options/rebinding,
+    30+ minute session.
+  - **Fixed: missing Holy Mountain items and start-area cart.** Perks spawned but hearts, spell refresh,
+    shop wands/spells, the workshop (wand editing) and the starting cart didn't. Perks come from the built-in
+    `data/scripts/wang_scripts.csv`; the rest from Lua `RegisterSpawnFunction( 0xff6d934c, ... )`. Our
+    `lua_tointeger` used cvttsd2si semantics, so every color above 0x7fffffff became 0x80000000 and the
+    registrations collided. The game's lua51.dll (0x10007d50) uses lj_num2bit (round to nearest even, wrap
+    modulo 2^32); the bridge now does the same, with luatest cases. Playtest confirmed: the cart spawns and two Holy Mountains were complete (hearts, refresh, shop, wand editing, perks).
+  - **Bug: fullscreen → windowed.** Sequence: booted windowed (fine) → switched to fullscreen in options
+    (fine) → switched back to windowed (broken). The window comes back far too large and mostly black, with the game drawn
+    in the bottom-left corner and mouse coordinates offset from what's drawn. Suspects: the game sets the
+    size while the macOS fullscreen Space transition is still running (asynchronous on macOS, synchronous
+    on Windows), so the sizes it caches (window, drawable, GL viewport) disagree with the final window;
+    or a points vs. pixels (Retina) mismatch between `SDL_GetWindowSize` and the drawable size. Log the
+    SDL window, fullscreen and size calls and the `SDL_WINDOWEVENT`s around the toggle to find out which.
+    For a manual session: `caffeinate -u build/noitamac` (add `NOITAMAC_TRACE_LUA=1` for Lua loads and
+    pcall errors; `longjmp` still exits 11, a sandboxed lib exits 10). Saves live under
+    `~/Library/Application Support/noitamac/AppData/LocalLow/Nolla_Games_Noita/` (the loop enabled the
+    `example` and `starting_loadouts` mods in save00/mod_config.xml and accepted the mod disclaimers in
+    save_shared/config.xml).
   - Menu input (mouse and keyboard through SDL events).
   - Start a new game, world generation, moving and shooting, then save & quit and continue.
   - Windowed and fullscreen modes.
@@ -174,7 +199,12 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     decide where fences are needed, and add a lifter option such as emitting acquire/release for
     identified addresses or functions.
   - Add a stress test if feasible.
-- [ ] Real audio (**needs the user to download the FMOD Studio API 2.01.x for macOS** from fmod.com).
+- [ ] Real audio. The FMOD Engine is downloaded: `~/Downloads/fmodstudioapi20123mac-installer.dmg`
+  (2.01.23, the last 2.01.x; the game ships 2.01.05). Inside the volume "FMOD Programmers API Mac", the
+  files are `FMOD Programmers API/api/{core,studio}/lib/libfmod{,studio}.dylib` (universal x86_64+arm64)
+  and `api/{core,studio}/inc/`.
+  - Add `tools/setup_fmod.sh` (like `setup_game.sh`): mount the dmg read-only, copy the dylibs and headers
+    to `build/fmod/`, and check the `FMOD_VERSION` and that the dylibs contain arm64. Never commit these files.
   - Bridge the 42 functions to the native C++ or C API, with handles mapped between guest and host.
   - Callbacks go to guest code through trampolines, marshalled onto a thread that has a guest `CPU`.
   - Check that the game's `.bank` files load in the runtime version we get. If only a newer 2.x is

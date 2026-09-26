@@ -263,15 +263,17 @@ int main(void) {
     LUA(&c, "luaL_unref", L, REGISTRY, ref);
     LUA(&c, "lua_settop", L, 0);
 
-    // Numbers: lua_tonumber returns in st0; lua_tointeger truncates like cvttsd2si.
+    // Numbers: lua_tonumber returns in st0; lua_tointeger is x86 LuaJIT's lj_num2bit (round to nearest even,
+    // wrap modulo 2^32), so RegisterSpawnFunction( 0xff6d934c, ... ) gets its color back.
     LUA(&c, "lua_pushnumber", L, dlo(2.5), dhi(2.5));
     int top = c.st_top;
     LUA(&c, "lua_tonumber", L, -1);
     CHECK("tonumber: pushed st0", c.st_top, (top - 1) & 7);
     CHECK("tonumber: value", c.st[c.st_top] == 2.5, 1);
     st_pop(&c);
-    static const struct { double v; uint32_t want; } TOINT[] = {{3.9, 3}, {-3.9, 0xfffffffd}, {1e10, 0x80000000}};
-    for (int i = 0; i < 3; i++) {
+    static const struct { double v; uint32_t want; } TOINT[] = {
+        {3.9, 4}, {-3.9, 0xfffffffc}, {2.5, 2}, {3.5, 4}, {4285371212.0, 0xff6d934c}, {1e10, 0x540be400}};
+    for (int i = 0; i < 6; i++) {
         LUA(&c, "lua_pushnumber", L, dlo(TOINT[i].v), dhi(TOINT[i].v));
         CHECK("tointeger", LUA(&c, "lua_tointeger", L, -1), TOINT[i].want);
     }
