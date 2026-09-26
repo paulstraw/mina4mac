@@ -33,9 +33,14 @@ void rt_process_init(uint32_t exe_base);
 
 // Give the calling host thread a guest thread: a stack slot and a TEB with an empty SEH chain, stack
 // bounds, ids, the PEB and a fresh copy of the static TLS block (from the guest heap) at TLS index 0.
-// Sets c->esp to the stack top and c->fs_base to the TEB, and returns the TEB address.
+// Sets c->esp to the stack top and c->fs_base to the TEB, makes c the thread's rt_thread_cpu, and returns
+// the TEB address.
 uint32_t rt_thread_init(CPU *c);
 // The same in two steps, for a thread whose id is needed before it runs: reserve slot n (its id is
 // THREAD_TID(n)), then set it up on the thread itself.
 int rt_thread_reserve(void);
 uint32_t rt_thread_setup(CPU *c, int n);
+
+// The calling host thread's guest CPU (set by rt_thread_init/rt_thread_setup), for host code entered from
+// outside guest code that must call back into it, such as the LuaJIT bridge's C function trampolines.
+extern __thread CPU *rt_thread_cpu;

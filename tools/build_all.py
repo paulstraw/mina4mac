@@ -1,6 +1,7 @@
 """Lift every function of the given modules (default: noita and msvcp120, which the launcher needs) into chunked C files, compile them in
 parallel, link the test harness (build/harness_all), the microbenchmark (build/bench <image.bin>) and the
-launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2).
+launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2, and the LuaJIT
+bridge with LuaJIT built from third_party/luajit into build/luajit/).
 
 Per-module chunks go in build/<module>/gen/; the combined decls.h, FN_TABLE and runtime objects go in
 build/gen_all/. Functions the lifter can't handle yet become stubs that report guest_unimpl.
@@ -23,6 +24,12 @@ import gen_sdl  # noqa: E402
 GEN = ROOT / "build/gen_all"
 LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "kernel32_file.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "shell32.c", "galaxy.c", "wininet.c", "fmod_stub.c", "opengl32.c", "thread.c", "sdl2_stdlib.c")  # runtime files only the launcher links
 SDL = ("sdl2.c",)  # runtime files of the SDL2 bridge (launcher only; compiled with the host SDL2's flags)
+LUA = ("lua51.c",)  # the LuaJIT bridge (launcher only; compiled with LUA_CFLAGS, linked with LUAJIT_LIB)
+LUAJIT_SRC = ROOT / "third_party/luajit"
+LUAJIT_BUILD = ROOT / "build/luajit"  # a copy of the submodule, built in place, so the submodule stays clean
+LUAJIT_LIB = LUAJIT_BUILD / "src/libluajit.a"
+# Lua errors unwind through the bridge (external unwinding), which restores guest state in cleanups.
+LUA_CFLAGS = ["-I", str(LUAJIT_SRC / "src"), "-fexceptions"]
 CHUNKS = 128
 _prog = None
 
@@ -47,6 +54,17 @@ def _lift_chunk(args):
     return failed
 
 
+def build_luajit():
+    """Build the static host LuaJIT 2.1 (ARM64, JIT enabled) from the submodule; make is incremental."""
+    if not (LUAJIT_SRC / "src/lua.h").exists():
+        sys.exit("third_party/luajit is missing: git submodule update --init")
+    LUAJIT_BUILD.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["rsync", "-a", "--exclude", ".git", f"{LUAJIT_SRC}/", f"{LUAJIT_BUILD}/"], check=True)
+    subprocess.run(["make", "-C", str(LUAJIT_BUILD), f"-j{os.cpu_count()}", "BUILDMODE=static", "amalg",
+                    "MACOSX_DEPLOYMENT_TARGET=14.0"], check=True, capture_output=True)
+    return LUAJIT_LIB
+
+
 def _sdl_config(flag):
     return subprocess.run(["sdl2-config", flag], capture_output=True, text=True, check=True).stdout.split()
 
@@ -55,7 +73,8 @@ def _cc(src):
     # Chunk objects sit next to their sources; runtime objects go in GEN.
     obj = (src.parent if src.name.startswith("chunk") else GEN) / (src.stem + ".o")
     sdl = _sdl_config("--cflags") if src.stem.startswith("sdl2") and src.stem != "sdl2_stdlib" else []
-    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl,
+    lua = LUA_CFLAGS if src.name in LUA else []
+    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl, *lua,
                     "-I", str(ROOT / "runtime"), "-I", str(GEN), str(src), "-o", str(obj)], check=True)
     return obj
 
@@ -90,8 +109,9 @@ def main():
              f"const int FN_COUNT = {len(starts)};"]
     (GEN / "table.c").write_text("\n".join(table))
     gen_sdl.generate()
-    launcher = [*LAUNCHER, *SDL, "sdl2_gen.c"]
-    srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL)]
+    build_luajit()
+    launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c"]
+    srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
     with mp.Pool(os.cpu_count()) as pool:
         objs = pool.map(_cc, srcs)
     t2 = time.time()
@@ -101,7 +121,7 @@ def main():
     subprocess.run(["clang", *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
     subprocess.run(["clang", *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
     subprocess.run(["clang", *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
-                    *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/noitamac")], check=True)
+                    str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/noitamac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,})")

@@ -99,7 +99,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
 
 ### Phase 5: LuaJIT
 
-- [ ] Host LuaJIT bridge (`runtime/lua51.c`).
+- [x] Host LuaJIT bridge (`runtime/lua51.c`).
   - Pin LuaJIT 2.1 as a git submodule under `third_party/` (MIT licensed, so it's fine to commit) and
     build it with the ARM64 JIT enabled.
   - `luaL_newstate` → `lua_newstate` with an allocator backed by the guest heap. Assert that every
@@ -125,6 +125,8 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     - `luaL_ref`
     - `lua_tonumber` returning in st0
     - a JIT-hot loop
+  - LuaJIT v2.1 @ c6ffc14 (`third_party/luajit`); build_all rsyncs it to `build/luajit/` and makes a static amalg lib (GC64, external unwinding); lua51.c needs `-fexceptions` (its trampoline restores ebx/esi/edi/ebp/esp/fs:[0]/x87 in a cleanup when a Lua error abandons guest frames, e.g. Lua `pcall` of guest code). Every lifted function has a compact-unwind entry. `rt_thread_cpu` (proc.h) is the per-thread CPU. Sandbox is per library: patched = its luaopen_* thunk holds `mov [0],0`; opening it or calling any wrapped C function then exits 10. Guest C++ destructors in abandoned frames don't run.
+  - luatest (check.sh): 48 checks, JIT loop 1.7 ns/iter with traces, 36 ns per Lua→guest call. check.sh seed 27182 all ok. Launcher: 4 states, 20 chunks loaded, 13 lua_pcalls, then stops at `MSVCR120!??_V@YAXPAX@Z` (delete[]) from 0x8b0858.
 - [ ] Run until the game's Lua init finishes (built-in scripts and mod loading with the default mods).
   Record which scripts ran, any API gaps, and where execution stops.
 

@@ -9,6 +9,7 @@
 
 static uint32_t TLS_START, TLS_LEN, TLS_ZERO;  // static TLS template: raw data range and zero fill
 static int NTHREADS;
+__thread CPU *rt_thread_cpu;
 
 void rt_process_init(uint32_t exe_base) {
     wr8(PEB_ADDR + PEB_BEING_DEBUGGED, 0);
@@ -59,5 +60,6 @@ uint32_t rt_thread_setup(CPU *c, int n) {
     }
     c->esp = hi;
     c->fs_base = teb;
+    rt_thread_cpu = c;
     return teb;
 }

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
-# hosttest, envtest, loadtest, undnametest, sdltest, then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, sdltest, luatest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -108,6 +108,15 @@ if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I run
     echo "sdltest: ok $(grep -c ' ok ' "$LOG/sdltest.log") checks"
 else
     echo "sdltest: FAIL, see $LOG/sdltest.log"; status=1
+fi
+
+# luatest needs build/luajit/src/libluajit.a, which build_all builds from third_party/luajit.
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -fexceptions -I runtime -I third_party/luajit/src \
+        runtime/lua_test.c runtime/lua51.c runtime/rt.c runtime/proc.c runtime/heap.c runtime/hle.c build/luajit/src/libluajit.a \
+        -o build/luatest >"$LOG/luatest.log" 2>&1 && build/luatest >>"$LOG/luatest.log" 2>&1; then
+    echo "luatest: ok $(grep -c ' ok ' "$LOG/luatest.log") checks; $(grep '^jit: [0-9]' "$LOG/luatest.log")"
+else
+    echo "luatest: FAIL, see $LOG/luatest.log"; status=1
 fi
 
 # The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.

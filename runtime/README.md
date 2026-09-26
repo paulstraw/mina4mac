@@ -37,8 +37,9 @@ Kernel object handles (threads, find handles) are small multiples of 4 from one 
 for; `GetProcAddress` on the latter returns the `dll!name` thunk for any name, which exits naming the
 function if it's called without a host implementation. Guest threads (`_beginthreadex`) are host pthreads,
 each with its own guest stack, TEB and TLS block; thread slots are not reused (at most 64 threads per run).
-Code patching has no effect: the code is recompiled, so `VirtualProtect` + writes to code (the game's mod
-sandbox patches LuaJIT functions that way) only change memory.
+Code patching has no effect: the code is recompiled, so `VirtualProtect` + writes to code only change memory.
+The game's mod sandbox patches LuaJIT functions that way; those writes land on thunks, and `lua51.c` checks
+them. Every LuaJIT object lives in the guest heap, so the pointers the guest sees are 32-bit guest addresses.
 
 ## Files
 
@@ -59,6 +60,7 @@ sandbox patches LuaJIT functions that way) only change memory.
 | `galaxy.c` | GOG Galaxy stubbed offline: the interface accessors return NULL, which the game checks |
 | `wininet.c` | WININET offline: `InternetOpenA` fails (ERROR_INTERNET_NAME_NOT_RESOLVED), and so does the rest |
 | `fmod_stub.c` | FMOD Studio/core stubbed silent: guest-heap handles, every call succeeds, banks hold no events, callbacks never fire |
+| `lua51.c` | lua51.dll bridged to host LuaJIT 2.1 (`third_party/luajit`, ARM64 JIT; built into `build/luajit/` by build_all): states allocate from the guest heap, guest C functions run through a trampoline on `rt_thread_cpu`, Lua errors unwind through recompiled frames (guest state restored in cleanups), the mod sandbox's patches of the io/os/package/debug/ffi thunks disable those libraries |
 | `opengl32.c` | the GL calls the game makes up to the main menu (GL 1.1 state, 2.0 shaders/programs/uniforms, buffers, vertex arrays, ARB FBOs), forwarded to the host's legacy 2.1 context when one is current (no-ops otherwise), until the generated GL bridge exists |
 | `sdl2.c` | SDL2 bridge runtime: handles, surface mirrors, `SDL_PollEvent` (plus scripted clicks, `NOITAMAC_CLICKS="t:x,y;..."`: seconds after the first poll, window points) |
 | `sdl2_stdlib.c` | the SDL2 C-library helpers SDL2main's WinMain uses (SDL_malloc/free/wcslen/isspace/iconv_string) and SDL_SetMainReady, which traces SDL_main's entry |
