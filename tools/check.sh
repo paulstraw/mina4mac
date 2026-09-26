@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest.
+# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
+# hosttest.
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or atomictest/importtest/hosttest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -61,6 +62,13 @@ if uv run tools/importtest.py >"$LOG/importtest.log" 2>&1; then
     echo "importtest: ok $(grep -c ' ok ' "$LOG/importtest.log") checks"
 else
     echo "importtest: FAIL, see $LOG/importtest.log"; status=1
+fi
+
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/host_test.c runtime/rt.c \
+        -o build/hosttest >"$LOG/hosttest.log" 2>&1 && build/hosttest >>"$LOG/hosttest.log" 2>&1; then
+    echo "hosttest: ok $(grep -c ' ok ' "$LOG/hosttest.log") checks"
+else
+    echo "hosttest: FAIL, see $LOG/hosttest.log"; status=1
 fi
 
 exit $status

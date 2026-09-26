@@ -217,7 +217,7 @@ Gotchas that already bit us:
   - Verify with `tools/check.sh` and a unit test that calls a fake host import through a thunk.
   - rt.h: `THUNK_BASE`/`THUNK_STRIDE`, `rt_bind_imports(base)` (parses the PE import dir in guest memory), `rt_thunk(dll,name)`, `rt_register_import(dll,name,GuestFn)`; host fns pop their own ret/args; unimplemented exits 4. Thunks are only checked on rt_lookup miss (bench unchanged). All slots bind to thunks, incl. MSVCP120 — resolving to recompiled msvcp120 exports is still TODO. `FnLifter.import_slots` replaces survey's guest_import grep.
   - `tools/importtest.py` + `runtime/import_test.c` (in check.sh): binds 635 noita slots, lifted call/jmp [slot] + direct guest_call, unimpl message; 15 checks ok. check.sh seed 3141: 97087 lifted; default 2286 / x87 156 pass, 0 fail/native_err.
-- [ ] Host function registry.
+- [x] Host function registry.
   - Add a C table or macros to declare host implementations by `dll!name`, with a calling convention
     (cdecl, or stdcall with arg bytes).
   - Add helpers for reading args from the guest stack (`ARG(n)`, `ARG_PTR(n)` → host pointer,
@@ -225,6 +225,8 @@ Gotchas that already bit us:
   - Handle returns in eax, eax:edx, x87 st0 (float returns) and xmm0, and correct stack cleanup per
     convention.
   - Unit-test cdecl and stdcall paths.
+  - `runtime/host.h`: `HOST_CDECL(dll, name)`, `HOST_STDCALL(dll, name, argbytes)`, `HOST(dll, id, "mangled", argbytes)` define a body `(CPU *c, uint32_t argp)` that self-registers via a constructor (dll token + ".dll"). The wrapper sets esp = entry+4+argbytes after the body, so bodies may push/call guest code. `ARG/ARG_I64/ARG_F32/ARG_F64/ARG_PTR/ARG_STR(n)` (n = 4-byte slot), `ret_i32/i64/f32/f64` (st0 push)/`ret_xmm0_f32/f64`.
+  - `runtime/host_test.c` (hosttest step in check.sh): 16 checks incl. cdecl/stdcall esp, edx:eax, st0, xmm0, mangled name, host→guest callback. check.sh seed 8086: 97087 lifted; default 2246 / x87 145 pass, 0 fail/native_err; atomictest, importtest ok.
 - [ ] Guest process environment.
   - A guest heap: a thread-safe allocator over a fixed guest range such as 0x20000000–0xE0000000, backing
     malloc/free/realloc/calloc/_aligned_malloc and HeapAlloc.
