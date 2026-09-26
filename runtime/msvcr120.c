@@ -232,6 +232,55 @@ HOST(msvcr120, type_info_ne, "??9type_info@@QBE_NABV0@@Z", 4) {
     ret_i32(c, !!strcmp((char *)P(c->ecx + 9), (char *)P(ARG(0) + 9)));
 }
 HOST(msvcr120, type_info_dtor, "??1type_info@@UAE@XZ", 0) {}  // cached names are never freed
+
+// RTTI (x86 layout). An object's vftable[-1] is its CompleteObjectLocator {signature, offset of this
+// vftable in the complete object, constructor displacement offset, TypeDescriptor *, ClassHierarchyDescriptor *};
+// the hierarchy is {signature, attributes, number of bases, BaseClassDescriptor *[]}, and each base is
+// {TypeDescriptor *, contained bases, PMD {mdisp, pdisp, vdisp}, attributes}. TypeDescriptors are
+// compared by address, then by decorated name (+8), as the CRT does.
+enum { CHD_MULTINH = 1, CHD_VIRTINH = 2, BCD_NOTVISIBLE = 1, BCD_AMBIGUOUS = 2 };
+
+static uint32_t rtti_col(uint32_t obj) { return rd32(rd32(obj) - 4); }
+
+static uint32_t rtti_complete(uint32_t obj) {
+    uint32_t col = rtti_col(obj), p = obj - rd32(col + 4), cd = rd32(col + 8);
+    return cd ? p + rd32(obj - cd) : p;
+}
+
+static int rtti_type_eq(uint32_t a, uint32_t b) { return a == b || !strcmp((char *)P(a + 8), (char *)P(b + 8)); }
+
+static uint32_t rtti_pmd_offset(uint32_t complete, uint32_t bcd) {  // PMDtoOffset
+    int32_t mdisp = rd32(bcd + 8), pdisp = rd32(bcd + 12), vdisp = rd32(bcd + 16), off = 0;
+    if (pdisp >= 0) off = pdisp + (int32_t)rd32(rd32(complete + pdisp) + vdisp);
+    return off + mdisp;
+}
+
+// __RTDynamicCast(inptr, VfDelta, SrcType, TargetType, isReference). The target must be a public,
+// unambiguous base of the complete object (or the complete type itself). For multiple and virtual
+// inheritance this takes the first such base, without the CRT's check that the source subobject can
+// reach it; a failed reference cast (std::bad_cast) exits, as exceptions are unsupported.
+HOST_CDECL(msvcr120, __RTDynamicCast) {
+    uint32_t in = ARG(0), target = ARG(3), result = 0;
+    if (!in) return ret_i32(c, 0);
+    uint32_t complete = rtti_complete(in), chd = rd32(rtti_col(in) + 16), n = rd32(chd + 8), bases = rd32(chd + 12);
+    for (uint32_t i = 0; i < n && !result; i++) {
+        uint32_t bcd = rd32(bases + 4 * i), attr = rd32(bcd + 20);
+        if (!rtti_type_eq(rd32(bcd), target) || (attr & BCD_NOTVISIBLE)) continue;
+        if ((rd32(chd + 4) & (CHD_MULTINH | CHD_VIRTINH)) && (attr & BCD_AMBIGUOUS)) continue;
+        result = complete + rtti_pmd_offset(complete, bcd);
+    }
+    if (!result && ARG(4)) {
+        fprintf(stderr, "__RTDynamicCast: bad_cast of %#x to %s (exceptions unsupported)\n", in, (char *)P(target + 8));
+        exit(7);
+    }
+    ret_i32(c, result);
+}
+
+// __RTtypeid(inptr): the complete object's TypeDescriptor (typeid of a polymorphic object).
+HOST_CDECL(msvcr120, __RTtypeid) {
+    if (!ARG(0)) { fprintf(stderr, "__RTtypeid: NULL (std::bad_typeid; exceptions unsupported)\n"); exit(7); }
+    ret_i32(c, rd32(rtti_col(ARG(0)) + 12));
+}
 HOST_CDECL(msvcr120, __clean_type_info_names_internal) {}
 
 HOST_CDECL(msvcr120, _errno) { ret_i32(c, c->fs_base + TEB_CRT_ERRNO); }

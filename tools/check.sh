@@ -74,7 +74,7 @@ fi
 # envtest needs build/noita/image.bin, which difftest writes.
 # The launcher's runtime files (build_all.py LAUNCHER) minus main.c.
 HLE=$(sed -nE 's/^LAUNCHER = \((.*)\).*/\1/p' tools/build_all.py | tr -d '",' | tr ' ' '\n' | grep -v '^main.c$' | sed 's|^|runtime/|')
-if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/env_test.c runtime/rt.c \
+if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime runtime/env_test.c runtime/rt.c -framework OpenGL \
         $HLE -o build/envtest >"$LOG/envtest.log" 2>&1 \
         && build/envtest build/noita/image.bin "${NOITA_DIR:-build/game}/msvcp120.dll" >>"$LOG/envtest.log" 2>&1; then
     echo "envtest: ok $(grep -c ' ok ' "$LOG/envtest.log") checks"
@@ -104,7 +104,10 @@ else
     echo "sdltest: FAIL, see $LOG/sdltest.log"; status=1
 fi
 
-build/noitamac >"$LOG/launcher.log" 2>&1
-echo "launcher: exit $?, $(tail -1 "$LOG/launcher.log")"
+# The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.
+timeout 300 build/noitamac >"$LOG/launcher.log" 2>&1
+rc=$?
+stop=$(grep -m1 -E '^(unimplemented|unimpl|no function|guest)' "$LOG/launcher.log" || tail -1 "$LOG/launcher.log")
+echo "launcher: exit $rc, $stop"
 
 exit $status

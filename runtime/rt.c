@@ -2,6 +2,7 @@
 // called by recompiled code.
 #include "rt.h"
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -124,13 +125,20 @@ void rt_register_import(const char *dll, const char *name, GuestFn fn) {
     HOST_FNS[NHOST_FNS++] = (HostFn){dll, name, fn};
 }
 
+// Thunks may also be created later, by GetProcAddress on any thread: creation is serialised, and a new
+// entry is filled in before NTHUNKS (read unlocked by call_thunk) covers it.
+static pthread_mutex_t THUNKS_LOCK = PTHREAD_MUTEX_INITIALIZER;
+
 uint32_t rt_thunk(const char *dll, const char *name) {
+    pthread_mutex_lock(&THUNKS_LOCK);
     int i = 0;
     while (i < NTHUNKS && !(strcasecmp(THUNKS[i].dll, dll) == 0 && strcmp(THUNKS[i].name, name) == 0)) i++;
     if (i == NTHUNKS) {
         if (NTHUNKS == MAX_THUNKS) { fprintf(stderr, "too many import thunks\n"); exit(2); }
-        THUNKS[NTHUNKS++] = (HostFn){strdup(dll), strdup(name), NULL};
+        THUNKS[i] = (HostFn){strdup(dll), strdup(name), NULL};
+        __atomic_store_n(&NTHUNKS, i + 1, __ATOMIC_RELEASE);
     }
+    pthread_mutex_unlock(&THUNKS_LOCK);
     return THUNK_BASE + THUNK_STRIDE * i;
 }
 
@@ -141,6 +149,12 @@ static int NMODULES;
 void rt_register_module(const char *dll, uint32_t base) {
     if (NMODULES == MAX_MODULES) { fprintf(stderr, "too many modules\n"); exit(2); }
     MODULES[NMODULES++] = (typeof(MODULES[0])){strdup(dll), base};
+}
+
+uint32_t rt_module_base(const char *dll) {
+    for (int m = 0; m < NMODULES; m++)
+        if (!strcasecmp(MODULES[m].dll, dll)) return MODULES[m].base;
+    return 0;
 }
 
 uint32_t rt_export(uint32_t base, const char *name) {
@@ -166,9 +180,7 @@ int rt_bind_imports(uint32_t base) {
     for (uint32_t d = base + dir; dir && rd32(d + 12); d += 20) {  // IMAGE_IMPORT_DESCRIPTOR
         const char *dll = (const char *)P(base + rd32(d + 12));
         uint32_t names = rd32(d) ? rd32(d) : rd32(d + 16);  // OriginalFirstThunk, else FirstThunk
-        uint32_t iat = base + rd32(d + 16), mod = 0;
-        for (int m = 0; m < NMODULES; m++)
-            if (!strcasecmp(MODULES[m].dll, dll)) mod = MODULES[m].base;
+        uint32_t iat = base + rd32(d + 16), mod = rt_module_base(dll);
         for (uint32_t k = 0, e; (e = rd32(base + names + 4 * k)); k++) {
             char ord[16];
             const char *name = ord;
@@ -196,7 +208,7 @@ static void trace_call(CPU *c, HostFn *t, GuestFn f) {
 
 static __attribute__((noinline)) void call_thunk(CPU *c, uint32_t target) {
     uint32_t i = (target - THUNK_BASE) / THUNK_STRIDE;
-    if (target < THUNK_BASE || (target - THUNK_BASE) % THUNK_STRIDE || i >= (uint32_t)NTHUNKS) {
+    if (target < THUNK_BASE || (target - THUNK_BASE) % THUNK_STRIDE || i >= (uint32_t)__atomic_load_n(&NTHUNKS, __ATOMIC_ACQUIRE)) {
         fprintf(stderr, "no function at %#x\n", target);
         exit(5);
     }

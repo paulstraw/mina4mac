@@ -12,7 +12,9 @@
 #define MAX_THREADS 64
 #define PEB_ADDR 0x1F800000u
 #define PROCESS_HEAP 0x1F810000u  // handle returned by GetProcessHeap; nothing lives there
-#define GUEST_PID 0x100u          // guest thread n has id GUEST_PID + 4 * (n + 1)
+#define GUEST_PID 0x100u          // guest thread n has id THREAD_TID(n)
+#define THREAD_TID(n) (GUEST_PID + 4 * ((uint32_t)(n) + 1))
+#define THREAD_SLOT(tid) ((int)(((tid) - GUEST_PID) / 4) - 1)
 
 // TEB fields (x86), read by guest code as fs:[offset].
 enum {
@@ -33,3 +35,7 @@ void rt_process_init(uint32_t exe_base);
 // bounds, ids, the PEB and a fresh copy of the static TLS block (from the guest heap) at TLS index 0.
 // Sets c->esp to the stack top and c->fs_base to the TEB, and returns the TEB address.
 uint32_t rt_thread_init(CPU *c);
+// The same in two steps, for a thread whose id is needed before it runs: reserve slot n (its id is
+// THREAD_TID(n)), then set it up on the thread itself.
+int rt_thread_reserve(void);
+uint32_t rt_thread_setup(CPU *c, int n);

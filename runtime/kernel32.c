@@ -2,7 +2,9 @@
 #include "kernel32.h"
 
 #include <pthread.h>
+#include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -136,3 +138,185 @@ HOST_STDCALL(kernel32, GetCurrentDirectoryA, 8) {
     memcpy(ARG_PTR(1), w, n + 1);
     ret_i32(c, n);
 }
+
+// Handles (kernel32.h): index n is handle 4 * (n + 1). Threads are named by guest thread id, processes by
+// guest pid, find handles (kernel32_file.c) by a host pointer.
+enum { MAX_HANDLES = 4096 };
+static struct { enum HandleKind kind; uint64_t data; } HANDLES[MAX_HANDLES];
+static pthread_mutex_t HANDLES_LOCK = PTHREAD_MUTEX_INITIALIZER;
+
+uint32_t handle_new(enum HandleKind kind, uint64_t data) {
+    pthread_mutex_lock(&HANDLES_LOCK);
+    uint32_t h = 0;
+    for (uint32_t i = 0; i < MAX_HANDLES && !h; i++)
+        if (HANDLES[i].kind == HK_FREE) HANDLES[i].kind = kind, HANDLES[i].data = data, h = 4 * (i + 1);
+    pthread_mutex_unlock(&HANDLES_LOCK);
+    return h;
+}
+
+int handle_get(uint32_t h, enum HandleKind kind, uint64_t *data) {
+    uint32_t i = h / 4 - 1;
+    if (h % 4 || i >= MAX_HANDLES) return 0;
+    pthread_mutex_lock(&HANDLES_LOCK);
+    int ok = HANDLES[i].kind == kind;
+    if (ok && data) *data = HANDLES[i].data;
+    pthread_mutex_unlock(&HANDLES_LOCK);
+    return ok;
+}
+
+HOST_STDCALL(kernel32, GetCurrentProcess, 0) { ret_i32(c, H_CURRENT_PROCESS); }
+HOST_STDCALL(kernel32, GetCurrentThread, 0) { ret_i32(c, H_CURRENT_THREAD); }
+
+int handle_close(uint32_t h) {
+    uint32_t i = h / 4 - 1;
+    pthread_mutex_lock(&HANDLES_LOCK);
+    int ok = h % 4 == 0 && i < MAX_HANDLES && HANDLES[i].kind != HK_FREE;
+    if (ok) HANDLES[i].kind = HK_FREE;
+    pthread_mutex_unlock(&HANDLES_LOCK);
+    return ok;
+}
+
+HOST_STDCALL(kernel32, CloseHandle, 4) {
+    uint32_t h = ARG(0);
+    ret_i32(c, h == H_CURRENT_PROCESS || h == H_CURRENT_THREAD || handle_close(h));
+}
+
+// DuplicateHandle(src process, src handle, dst process, &dst handle, access, inherit, options). Only
+// within this process, and only thread and process handles (including the pseudo-handles).
+HOST_STDCALL(kernel32, DuplicateHandle, 28) {
+    uint32_t src = ARG(1), out = ARG(3);
+    uint64_t data;
+    enum HandleKind kind = src == H_CURRENT_THREAD ? (data = rd32(c->fs_base + TEB_TID), HK_THREAD)
+                         : src == H_CURRENT_PROCESS ? (data = GUEST_PID, HK_PROCESS)
+                         : handle_get(src, HK_THREAD, &data) ? HK_THREAD
+                         : handle_get(src, HK_PROCESS, &data) ? HK_PROCESS : HK_FREE;
+    uint32_t h = kind == HK_FREE ? 0 : handle_new(kind, data);
+    if (out) wr32(out, h);
+    ret_i32(c, h != 0);
+}
+
+// SYSTEM_INFO for an x86 (Pentium Pro family) machine with the host's processor count (at most 32, the
+// width of the affinity mask).
+HOST_STDCALL(kernel32, GetSystemInfo, 4) {
+    uint32_t si = ARG(0);
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    n = n < 1 ? 1 : n > 32 ? 32 : n;
+    memset(P(si), 0, 36);
+    wr32(si + 4, 0x1000);                                     // dwPageSize
+    wr32(si + 8, 0x10000);                                    // lpMinimumApplicationAddress
+    wr32(si + 12, 0xfffeffff);                                // lpMaximumApplicationAddress (large address aware)
+    wr32(si + 16, n == 32 ? 0xffffffff : (1u << n) - 1);      // dwActiveProcessorMask
+    wr32(si + 20, n);                                         // dwNumberOfProcessors
+    wr32(si + 24, 586);                                       // dwProcessorType: PROCESSOR_INTEL_PENTIUM
+    wr32(si + 28, 0x10000);                                   // dwAllocationGranularity
+    wr16(si + 32, 6);                                         // wProcessorLevel
+}
+
+// GetVersionExA(OSVERSIONINFOA or OSVERSIONINFOEXA): the version in the PEB (proc.c), Windows 7 SP1.
+HOST_STDCALL(kernel32, GetVersionExA, 4) {
+    uint32_t vi = ARG(0), size = rd32(vi);
+    if (size != 148 && size != 156) return ret_i32(c, 0);
+    memset(P(vi + 4), 0, size - 4);
+    wr32(vi + 4, rd32(PEB_ADDR + PEB_OS_MAJOR));
+    wr32(vi + 8, rd32(PEB_ADDR + PEB_OS_MINOR));
+    wr32(vi + 12, rd16(PEB_ADDR + PEB_OS_BUILD));
+    wr32(vi + 16, rd32(PEB_ADDR + PEB_OS_PLATFORM));
+    strcpy((char *)P(vi + 20), "Service Pack 1");
+    if (size == 156) wr16(vi + 148, 1), wr8(vi + 154, 1);     // wServicePackMajor, wProductType: workstation
+    ret_i32(c, 1);
+}
+
+// Dynamic loading. A recompiled module (rt_register_module) is its own handle; the DLLs the runtime
+// stands in for (host implementations) get fake handles in HLE_MODULES_LO + 0x10000 * n, with nothing
+// mapped there. GetProcAddress on those returns the dll!name thunk for any name, like import binding:
+// calling one with no host implementation exits naming it. Other DLLs fail to load.
+enum { HLE_MODULES_LO = 0xE0000000u, ERROR_MOD_NOT_FOUND = 126, ERROR_PROC_NOT_FOUND = 127 };
+static const char *const HLE_DLLS[] = {
+    "kernel32.dll", "user32.dll", "gdi32.dll", "opengl32.dll", "shell32.dll", "shlwapi.dll", "ole32.dll",
+    "winmm.dll", "wininet.dll", "ws2_32.dll", "comdlg32.dll", "msvcr120.dll",
+    "SDL2.dll", "lua51.dll", "fmod.dll", "fmodstudio.dll", "Galaxy.dll",
+};
+enum { NHLE_DLLS = sizeof HLE_DLLS / sizeof *HLE_DLLS };
+
+HOST_STDCALL(kernel32, LoadLibraryA, 4) {
+    const char *name = ARG_STR(0), *slash = strrchr(name, '\\');
+    char dll[256];
+    snprintf(dll, sizeof dll, "%s%s", slash ? slash + 1 : name, strchr(slash ? slash : name, '.') ? "" : ".dll");
+    uint32_t base = rt_module_base(dll);
+    for (uint32_t i = 0; i < NHLE_DLLS && !base; i++)
+        if (!strcasecmp(HLE_DLLS[i], dll)) base = HLE_MODULES_LO + 0x10000 * i;
+    if (!base) wr32(c->fs_base + TEB_LAST_ERROR, ERROR_MOD_NOT_FOUND);
+    ret_i32(c, base);
+}
+
+HOST_STDCALL(kernel32, FreeLibrary, 4) { ret_i32(c, 1); }  // modules stay loaded
+
+// GetProcAddress(module, name or ordinal).
+HOST_STDCALL(kernel32, GetProcAddress, 8) {
+    uint32_t mod = ARG(0), sym = ARG(1);
+    char name[512];
+    if (sym < 0x10000) snprintf(name, sizeof name, "#%u", sym);
+    else snprintf(name, sizeof name, "%s", (const char *)P(sym));
+    uint32_t i = (mod - HLE_MODULES_LO) / 0x10000, f;
+    if (mod >= HLE_MODULES_LO && i < NHLE_DLLS && mod % 0x10000 == 0) f = rt_thunk(HLE_DLLS[i], name);
+    else f = mod ? rt_export(mod, name) : 0;
+    if (!f) wr32(c->fs_base + TEB_LAST_ERROR, ERROR_PROC_NOT_FOUND);
+    ret_i32(c, f);
+}
+
+// Virtual memory. Guest memory is always mapped read/write, so VirtualAlloc hands out zeroed,
+// 64 KB-aligned blocks of the guest heap (reserve and commit are the same), and protections are only
+// recorded as far as callers can observe them. The game's code is recompiled, so writes to its code
+// (VirtualProtect then patch, as noita.exe does to LuaJIT functions for its mod sandbox) have no effect
+// on execution; the trace notes them.
+enum { MEM_COMMIT = 0x1000, MEM_RESERVE = 0x2000, MEM_DECOMMIT = 0x4000, MEM_RELEASE = 0x8000 };
+enum { PAGE_READWRITE = 0x04, PAGE_EXECUTE_READ = 0x20, ERROR_INVALID_ADDRESS = 487 };
+enum { MAX_REGIONS = 4096 };
+static struct { uint32_t base, size; } REGIONS[MAX_REGIONS];
+static pthread_mutex_t REGIONS_LOCK = PTHREAD_MUTEX_INITIALIZER;
+
+static int region_of(uint32_t a) {  // lock held; -1 if none
+    for (int i = 0; i < MAX_REGIONS; i++)
+        if (REGIONS[i].size && a - REGIONS[i].base < REGIONS[i].size) return i;
+    return -1;
+}
+
+HOST_STDCALL(kernel32, VirtualAlloc, 16) {  // (address, size, allocation type, protection)
+    uint32_t addr = ARG(0), size = (ARG(1) + 0xfff) & ~0xfffu, r = 0;
+    pthread_mutex_lock(&REGIONS_LOCK);
+    if (addr) {  // committing (part of) a region reserved earlier
+        int i = region_of(addr);
+        if (i >= 0 && addr - REGIONS[i].base + size <= REGIONS[i].size) r = addr & ~0xfffu;
+    } else if (size && (r = heap_aligned_alloc(size, 0x10000))) {
+        int i = 0;
+        while (i < MAX_REGIONS && REGIONS[i].size) i++;
+        if (i == MAX_REGIONS) heap_aligned_free(r), r = 0;
+        else memset(P(r), 0, size), REGIONS[i].base = r, REGIONS[i].size = size;
+    }
+    pthread_mutex_unlock(&REGIONS_LOCK);
+    if (!r) wr32(c->fs_base + TEB_LAST_ERROR, ERROR_INVALID_ADDRESS);
+    ret_i32(c, r);
+}
+
+HOST_STDCALL(kernel32, VirtualFree, 12) {  // (address, size, free type)
+    uint32_t addr = ARG(0), type = ARG(2);
+    pthread_mutex_lock(&REGIONS_LOCK);
+    int i = region_of(addr), ok = i >= 0 && (type == MEM_DECOMMIT || (type == MEM_RELEASE && REGIONS[i].base == addr));
+    if (ok && type == MEM_RELEASE) heap_aligned_free(addr), REGIONS[i].size = 0;
+    pthread_mutex_unlock(&REGIONS_LOCK);
+    if (!ok) wr32(c->fs_base + TEB_LAST_ERROR, ERROR_INVALID_ADDRESS);
+    ret_i32(c, ok);
+}
+
+// VirtualProtect(address, size, new protection, &old protection): the old protection reported is
+// execute-read inside a mapped image's code, read-write elsewhere.
+static int in_image_code(uint32_t a) { return rt_lookup(a) != NULL; }
+HOST_STDCALL(kernel32, VirtualProtect, 16) {
+    uint32_t addr = ARG(0), old = ARG(3);
+    int code = in_image_code(addr) || (addr >= THUNK_BASE);
+    if (old) wr32(old, code ? PAGE_EXECUTE_READ : PAGE_READWRITE);
+    if (rt_trace && code) fprintf(stderr, "[noitamac] VirtualProtect(%#x, %#x) on code: patches won't take effect\n", addr, ARG(1));
+    ret_i32(c, 1);
+}
+
+HOST_STDCALL(kernel32, FlushInstructionCache, 12) { ret_i32(c, 1); }

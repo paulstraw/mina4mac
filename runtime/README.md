@@ -14,7 +14,8 @@ The guest address space is one 4 GB host mapping (`MEM`, `rt_init`); guest addre
 | `0x1F000000`–`0x1F07FFFF` | thread slots n = 0..63, `0x2000` each: TEB page, then its TLS pointer array | `proc.h` |
 | `0x1F800000` | PEB | `proc.h` |
 | `0x1F810000` | process heap handle (a handle only; nothing is mapped there) | `proc.h` |
-| `0x20000000`–`0xDFFFFFFF` | guest heap (3 GB) | `heap.h` |
+| `0x20000000`–`0xDFFFFFFF` | guest heap (3 GB); VirtualAlloc blocks come from it too | `heap.h` |
+| `0xE0000000`+ | module handles of HLE DLLs (`LoadLibraryA`), `0x10000` apart (a handle only; nothing is mapped there) | `kernel32.c` |
 | `0xF0000000`+ | host function thunks, 16 bytes apart (no code, looked up by `guest_call`); a data import (`_acmdln`, `_fmode`, `_commode`) is stored in its thunk's 16 bytes | `rt.h`, `msvcr120.c` |
 
 Thread n (0 = main) has thread id `0x104 + 4n` in process `0x100`. Its TEB has `fs:[0]` = `0xFFFFFFFF`,
@@ -26,7 +27,17 @@ the HLE CRT's errno at `+0xFF0`.
 
 The launcher's working directory is the game directory. The host file system is drive `Z:` (as in Wine), so
 `GetCurrentDirectoryW` returns e.g. `Z:\Users\me\noitamac\build\game`; `host_path` (hle.c) maps relative and `Z:`
-paths back. stdio does no text-mode CR/LF translation. Only the "C" locale exists.
+paths back. stdio does no text-mode CR/LF translation. Only the "C" locale exists. Known folders
+(`SHGetKnownFolderPath`, e.g. `LocalLow`, where the game keeps its saves) live under
+`~/Library/Application Support/noitamac/AppData/`.
+
+Kernel object handles (threads, find handles) are small multiples of 4 from one table (`kernel32.h`).
+`LoadLibraryA` succeeds for recompiled modules (the handle is the base) and for the DLLs the runtime stands in
+for; `GetProcAddress` on the latter returns the `dll!name` thunk for any name, which exits naming the
+function if it's called without a host implementation. Guest threads (`_beginthreadex`) are host pthreads,
+each with its own guest stack, TEB and TLS block; thread slots are not reused (at most 64 threads per run).
+Code patching has no effect: the code is recompiled, so `VirtualProtect` + writes to code (the game's mod
+sandbox patches LuaJIT functions that way) only change memory.
 
 ## Files
 
@@ -41,7 +52,11 @@ paths back. stdio does no text-mode CR/LF translation. Only the "C" locale exist
 | `msvcr120.c`, `kernel32.c` | native (HLE) implementations of those DLLs' imports; `msvcr120.h` has `crt_init` (command line, data imports) |
 | `msvcr120_stdio.c` | FILE functions and the MSVC-style printf engine over guest varargs (`crt_vformat`) |
 | `msvcr120_string.c`, `msvcr120_math.c`, `msvcr120_concrt.c` | mem/str/ctype/conversions/rand/locale; libm; ConcRT locks, events, condition variables |
-| `shlwapi.c` | SHLWAPI (PathAppendW) |
+| `kernel32_file.c` | KERNEL32 file system: FindFirst/NextFileW, file attributes, create/delete/move/copy |
+| `thread.c` | guest threads: `_beginthreadex`/`_endthreadex`, Wait/GetExitCode/ResumeThread on thread handles |
+| `shlwapi.c`, `shell32.c` | SHLWAPI (PathAppendW); SHELL32 known folders and directory creation, ole32 CoTaskMemFree |
+| `galaxy.c` | GOG Galaxy stubbed offline: the interface accessors return NULL, which the game checks |
+| `opengl32.c` | a few GL 1.1 calls forwarded to the host's OpenGL when a context is current (no-ops otherwise), until the generated GL bridge exists |
 | `sdl2_stdlib.c` | the SDL2 C-library helpers SDL2main's WinMain uses (SDL_malloc/free/wcslen/isspace/iconv_string) and SDL_SetMainReady, which traces SDL_main's entry |
 | `hle.c`/`hle.h` | helpers shared by HLE files: guest strings, UTF-8/16, Windows paths, errno |
 | `sync.c`/`sync.h` | pool of host mutex/condvar objects behind guest critical sections and ConcRT objects |

@@ -46,6 +46,9 @@ uint32_t rt_thunk(const char *dll, const char *name);
 // (headers included). rt_bind_imports then binds imports from it to its exports instead of thunks.
 void rt_register_module(const char *dll, uint32_t base);
 
+// Guest base of registered module dll (matched case-insensitively), or 0.
+uint32_t rt_module_base(const char *dll);
+
 // Guest address of export `name` ("#<n>" for an ordinal) of the PE image mapped at `base`, or 0.
 uint32_t rt_export(uint32_t base, const char *name);
 

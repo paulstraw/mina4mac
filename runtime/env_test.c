@@ -4,7 +4,7 @@
 // exit handlers, _controlfp_s) and the KERNEL32 identity/time imports it calls; then the imports the C++
 // static initializers use (memory/string/locale/stdio/printf/math/type_info/ConcRT/critical sections/
 // __dllonexit/paths), binding the exe's MSVCP120 imports to the recompiled msvcp120.dll's exports, and the
-// command line and SDL2 helpers SDL2main's WinMain uses.
+// command line and SDL2 helpers SDL2main's WinMain uses; then the imports SDL_main uses up to its window.
 //   env_test <noita image.bin> <msvcp120.dll>
 #include <pthread.h>
 #include <signal.h>
@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -33,8 +34,24 @@ static void guest_log(CPU *c, char tag, uint32_t r) {
 static void F_a(CPU *c) { guest_log(c, 'a', 0); }
 static void F_b(CPU *c) { guest_log(c, 'b', 0); }
 static void F_seven(CPU *c) { guest_log(c, '7', 7); }
-const FnEntry FN_TABLE[] = {{G_A, F_a}, {G_B, F_b}, {G_SEVEN, F_seven}};
-const int FN_COUNT = 3;
+// Thread start routines (unsigned __stdcall start(void *arg)): G_THREAD records its thread id and returns
+// arg + 1; G_ENDTHREAD calls _endthreadex(3 * arg) instead of returning.
+enum { G_THREAD = 0x300030, G_ENDTHREAD = 0x300040 };
+static uint32_t THREAD_SEEN;
+static void F_thread(CPU *c) {
+    __atomic_store_n(&THREAD_SEEN, rd32(c->fs_base + TEB_TID), __ATOMIC_RELEASE);
+    c->eax = rd32(c->esp + 4) + 1;
+    c->esp += 8;
+}
+static void F_endthread(CPU *c) {
+    uint32_t arg = rd32(c->esp + 4);
+    c->esp -= 8;
+    wr32(c->esp + 4, 3 * arg);
+    wr32(c->esp, 0x0badf000);
+    guest_call(c, rt_thunk("MSVCR120.dll", "_endthreadex"));
+}
+const FnEntry FN_TABLE[] = {{G_A, F_a}, {G_B, F_b}, {G_SEVEN, F_seven}, {G_THREAD, F_thread}, {G_ENDTHREAD, F_endthread}};
+const int FN_COUNT = 5;
 
 enum { EXE_BASE = 0x400000, RET_ADDR = 0x0badf000, THREADS = 8, ITERS = 200000, LIVE_MAX = 256 };
 
@@ -290,6 +307,170 @@ static void initializer_imports(CPU *cp, CPU *c2) {
 }
 
 // Binding the exe's MSVCP120 imports to the recompiled DLL's exports (by name, and by ordinal).
+// A guest string compared with a host one, UTF-16.
+static int gwstreq(uint32_t w, const char *s) {
+    char u[4096];
+    return w && utf16_to_utf8(w, u, sizeof u) && !strcmp(u, s);
+}
+
+// The imports SDL_main uses on the way to its window: known folders, the file system, dynamic loading,
+// system info, virtual memory, threads, RTTI casts, the offline Galaxy stub and GL without a context.
+static void sdl_main_imports(CPU *cp) {
+    CPU c = *cp;
+    char tmp[] = "/tmp/noitamac_envtest.XXXXXX", p[4096], w[4096];
+    CHECK("mkdtemp", mkdtemp(tmp) != NULL, 1);
+    setenv("HOME", tmp, 1);  // known folders live under $HOME
+
+    // SHELL32 / ole32.
+    static const uint8_t LOCAL_LOW[16] = {0xa4, 0xa1, 0x20, 0xa5, 0x80, 0x17, 0xf6, 0x4f,
+                                          0xbd, 0x18, 0x16, 0x73, 0x43, 0xc5, 0xaf, 0x16};
+    uint32_t guid = heap_alloc(16), out = heap_alloc(4);
+    memcpy(P(guid), LOCAL_LOW, 16);
+    uint32_t hr = (call(&c, "SHELL32.dll", "SHGetKnownFolderPath", 4, (uint32_t[]){guid, 0x8000, 0, out}), c.eax);
+    snprintf(p, sizeof p, "%s/Library/Application Support/noitamac/AppData/LocalLow", tmp);
+    win_path(p, w, sizeof w);
+    struct stat st;
+    CHECK("SHGetKnownFolderPath LocalLow", hr == 0 && gwstreq(rd32(out), w) && !stat(p, &st) && S_ISDIR(st.st_mode), 1);
+    call(&c, "ole32.dll", "CoTaskMemFree", 1, (uint32_t[]){rd32(out)});
+    CHECK("CoTaskMemFree", heap_owns(rd32(out)), 0);
+    wr8(guid, 0);
+    CHECK("SHGetKnownFolderPath unknown", (call(&c, "SHELL32.dll", "SHGetKnownFolderPath", 4, (uint32_t[]){guid, 0, 0, out}),
+                                           c.eax == 0x80070057 && rd32(out) == 0), 1);
+    snprintf(p, sizeof p, "%s/d/e/f", tmp);
+    win_path(p, w, sizeof w);
+    uint32_t dw = gws(w);
+    CHECK("SHCreateDirectoryExW nested", (call(&c, "SHELL32.dll", "SHCreateDirectoryExW", 3, (uint32_t[]){0, dw, 0}), c.eax), 0);
+    CHECK("SHCreateDirectoryExW exists", (call(&c, "SHELL32.dll", "SHCreateDirectoryExW", 3, (uint32_t[]){0, dw, 0}), c.eax), 183);
+
+    // KERNEL32 file system, on files x.txt (5 bytes), Y.TXT and z.dat in the temp dir.
+    const char *files[] = {"x.txt", "Y.TXT", "z.dat"};
+    for (int i = 0; i < 3; i++) {
+        snprintf(p, sizeof p, "%s/%s", tmp, files[i]);
+        FILE *f = fopen(p, "w");
+        fputs(i ? "" : "hello", f);
+        fclose(f);
+    }
+    snprintf(p, sizeof p, "%s/*.txt", tmp);
+    win_path(p, w, sizeof w);
+    uint32_t fd = heap_calloc(1, 592), fh = K32("FindFirstFileW", gws(w), fd);
+    char names[64] = "";
+    uint32_t size_x = 0, finds = 0;
+    for (int ok = fh != 0xffffffff; ok; ok = K32("FindNextFileW", fh, fd), finds++) {
+        char u[260];
+        utf16_to_utf8(fd + 44, u, sizeof u);
+        strcat(names, u), strcat(names, " ");
+        if (!strcmp(u, "x.txt")) size_x = rd32(fd + 32);
+    }
+    CHECK("FindFirst/NextFileW *.txt (any case)", finds == 2 && strstr(names, "x.txt") && strstr(names, "Y.TXT"), 1);
+    CHECK("... size, then ERROR_NO_MORE_FILES", size_x == 5 && K32("GetLastError") == 18, 1);
+    CHECK("FindClose", K32("FindClose", fh) * 2 + K32("FindClose", fh), 2);
+    snprintf(p, sizeof p, "%s/*", tmp);
+    win_path(p, w, sizeof w);
+    fh = K32("FindFirstFileW", gws(w), fd);
+    for (finds = 0; fh != 0xffffffff && (finds == 0 || K32("FindNextFileW", fh, fd)); finds++) {}
+    K32("FindClose", fh);
+    CHECK("FindFirstFileW * (+ . .. d Library)", finds, 7);
+    snprintf(p, sizeof p, "%s/*.none", tmp);
+    win_path(p, w, sizeof w);
+    CHECK("FindFirstFileW no match", K32("FindFirstFileW", gws(w), fd) == 0xffffffff && K32("GetLastError") == 2, 1);
+    win_path(tmp, w, sizeof w);
+    CHECK("GetFileAttributesA dir", K32("GetFileAttributesA", gs(w)), 0x10);
+    snprintf(p, sizeof p, "%s/x.txt", tmp);
+    win_path(p, w, sizeof w);
+    uint32_t xa = gs(w), xw = gws(w);
+    CHECK("GetFileAttributesW file", K32("GetFileAttributesW", xw), 0x80);
+    snprintf(p, sizeof p, "%s/copy.txt", tmp);
+    win_path(p, w, sizeof w);
+    uint32_t ca = gs(w), cw = gws(w);
+    CHECK("CopyFileA", K32("CopyFileA", xa, ca, 1), 1);
+    CHECK("CopyFileA fail if exists", K32("CopyFileA", xa, ca, 1) == 0 && K32("GetLastError") == 80, 1);
+    CHECK("MoveFileExW onto existing fails", K32("MoveFileExW", cw, xw, 0) == 0 && K32("GetLastError") == 183, 1);
+    CHECK("MoveFileExW replace", K32("MoveFileExW", cw, xw, 1) == 1 && K32("GetFileAttributesW", cw) == 0xffffffff, 1);
+    CHECK("... missing: ERROR_FILE_NOT_FOUND", K32("GetLastError"), 2);
+    CHECK("DeleteFileW", K32("DeleteFileW", xw) * 2 + K32("DeleteFileW", xw), 2);
+    snprintf(p, sizeof p, "%s/newdir", tmp);
+    win_path(p, w, sizeof w);
+    CHECK("CreateDirectoryA", K32("CreateDirectoryA", gs(w), 0) * 2 + K32("CreateDirectoryA", gs(w), 0), 2);
+
+    // Dynamic loading.
+    uint32_t gl = K32("LoadLibraryA", gs("opengl32.dll")), u32 = K32("LoadLibraryA", gs("C:\\Windows\\USER32"));
+    CHECK("LoadLibraryA HLE dlls", gl && u32 && gl != u32, 1);
+    CHECK("GetProcAddress -> thunk", K32("GetProcAddress", gl, gs("glClear")), rt_thunk("opengl32.dll", "glClear"));
+    CHECK("LoadLibraryA unknown", K32("LoadLibraryA", gs("nope.dll")) == 0 && K32("GetLastError") == 126, 1);
+    CHECK("FreeLibrary", K32("FreeLibrary", gl), 1);
+
+    // System info and virtual memory.
+    uint32_t si = heap_alloc(36);
+    K32("GetSystemInfo", si);
+    CHECK("GetSystemInfo page size, cpus", rd32(si + 4) == 0x1000 && rd32(si + 20) >= 1 && rd32(si + 20) <= 32, 1);
+    uint32_t vi = heap_alloc(148);
+    wr32(vi, 148);
+    CHECK("GetVersionExA 6.1.7601", K32("GetVersionExA", vi) && rd32(vi + 4) == 6 && rd32(vi + 8) == 1
+          && rd32(vi + 12) == 7601, 1);
+    uint32_t va = K32("VirtualAlloc", 0, 0x5000, 0x3000, 4);
+    CHECK("VirtualAlloc: 64K aligned, zeroed", va && va % 0x10000 == 0 && all(va, 0, 0x5000), 1);
+    CHECK("VirtualAlloc commit inside", K32("VirtualAlloc", va + 0x1234, 0x100, 0x1000, 4), va + 0x1000);
+    CHECK("VirtualAlloc commit outside", K32("VirtualAlloc", va + 0x5000, 0x100, 0x1000, 4), 0);
+    uint32_t old = heap_alloc(4);
+    CHECK("VirtualProtect data", K32("VirtualProtect", va, 16, 0x40, old) == 1 && rd32(old) == 4, 1);
+    CHECK("VirtualProtect thunk: exec-read", K32("VirtualProtect", rt_thunk("lua51.dll", "x"), 16, 0x40, old) && rd32(old) == 0x20, 1);
+    CHECK("VirtualFree release", K32("VirtualFree", va, 0, 0x8000) * 2 + K32("VirtualFree", va, 0, 0x8000), 2);
+
+    // Threads and handles.
+    uint32_t tid = heap_alloc(4), code = heap_alloc(4);
+    uint32_t th = CRT("_beginthreadex", 0, 0, G_THREAD, 41, 4 /* CREATE_SUSPENDED */, tid);
+    usleep(20000);
+    CHECK("_beginthreadex suspended", th && K32("GetExitCodeThread", th, code) && rd32(code) == 259
+          && K32("WaitForSingleObject", th, 0) == 0x102 && !__atomic_load_n(&THREAD_SEEN, __ATOMIC_ACQUIRE), 1);
+    CHECK("ResumeThread", K32("ResumeThread", th), 1);
+    CHECK("WaitForSingleObject", K32("WaitForSingleObject", th, 0xffffffff), 0);
+    CHECK("thread: own id, exit code", THREAD_SEEN == rd32(tid) && THREAD_SEEN != GUEST_PID + 4
+          && K32("GetExitCodeThread", th, code) && rd32(code) == 42, 1);
+    CHECK("CloseHandle thread", K32("CloseHandle", th) * 2 + K32("CloseHandle", th), 2);
+    th = CRT("_beginthreadex", 0, 0, G_ENDTHREAD, 5, 0, 0);
+    CHECK("_endthreadex", K32("WaitForSingleObject", th, 5000) == 0 && K32("GetExitCodeThread", th, code) && rd32(code) == 15, 1);
+    K32("CloseHandle", th);
+    uint32_t dup = heap_alloc(4);
+    CHECK("DuplicateHandle current thread", K32("DuplicateHandle", 0xffffffff, 0xfffffffe, 0xffffffff, dup, 0, 0, 2), 1);
+    CHECK("... is a thread handle", K32("GetExitCodeThread", rd32(dup), code) && rd32(code) == 259, 1);
+    CHECK("CloseHandle pseudo-handles", K32("CloseHandle", rd32(dup)) + K32("CloseHandle", 0xfffffffe), 2);
+
+    // RTTI. TypeDescriptors: {vftable, spare, ".?AV<name>@@"}. Class B : A (single inheritance), and
+    // class C : A, B2 with the B2 subobject at +8 (multiple inheritance).
+    uint32_t r = heap_calloc(1, 1024), tda = r, tdb = r + 32, tdc = r + 64, tdb2 = r + 96, tdx = r + 128;
+    strcpy((char *)P(tda + 8), ".?AVA@@"), strcpy((char *)P(tdb + 8), ".?AVB@@");
+    strcpy((char *)P(tdc + 8), ".?AVC@@"), strcpy((char *)P(tdb2 + 8), ".?AVB2@@"), strcpy((char *)P(tdx + 8), ".?AVX@@");
+    uint32_t bcd = r + 160;  // BaseClassDescriptors, 28 bytes each: {type, contained, mdisp, pdisp, vdisp, attr, chd}
+    uint32_t types[] = {tdb, tda, tdc, tda, tdb2}, mdisps[] = {0, 0, 0, 0, 8};
+    for (int i = 0; i < 5; i++) wr32(bcd + 28 * i, types[i]), wr32(bcd + 28 * i + 8, mdisps[i]), wr32(bcd + 28 * i + 12, -1);
+    uint32_t arr = r + 320, chd = r + 360, col = r + 400, obj = r + 512;  // chd: B (2 bases), then C (3 bases, MI)
+    for (int i = 0; i < 5; i++) wr32(arr + 4 * i, bcd + 28 * i);
+    wr32(chd + 8, 2), wr32(chd + 12, arr);
+    wr32(chd + 16 + 4, 1), wr32(chd + 16 + 8, 3), wr32(chd + 16 + 12, arr + 8);
+    // COLs {sig, offset, cd offset, type, chd} for B, C@0, C@8, each followed by its one-slot vftable.
+    uint32_t cols[][3] = {{0, tdb, chd}, {0, tdc, chd + 16}, {8, tdc, chd + 16}};
+    for (int i = 0; i < 3; i++) {
+        uint32_t o = col + 32 * i;
+        wr32(o + 4, cols[i][0]), wr32(o + 12, cols[i][1]), wr32(o + 16, cols[i][2]), wr32(o + 24, o);  // vftable[-1] = COL
+    }
+    uint32_t objb = obj, objc = obj + 16;
+    wr32(objb, col + 28), wr32(objc, col + 32 + 28), wr32(objc + 8, col + 64 + 28);
+    CHECK("dynamic_cast SI down", CRT("__RTDynamicCast", objb, 0, tda, tdb, 0), objb);
+    CHECK("dynamic_cast SI unrelated", CRT("__RTDynamicCast", objb, 0, tda, tdx, 0), 0);
+    CHECK("dynamic_cast NULL", CRT("__RTDynamicCast", 0, 0, tda, tdb, 0), 0);
+    CHECK("dynamic_cast MI B2 -> C", CRT("__RTDynamicCast", objc + 8, 0, tdb2, tdc, 0), objc);
+    CHECK("dynamic_cast MI A -> B2 (cross)", CRT("__RTDynamicCast", objc, 0, tda, tdb2, 0), objc + 8);
+    CHECK("__RTtypeid via B2 subobject", CRT("__RTtypeid", objc + 8), tdc);
+
+    // Galaxy offline, GL with no context current (a no-op, still popping its stdcall args).
+    CHECK("Galaxy User() = NULL", (call(&c, "Galaxy.dll", "?User@api@galaxy@@YAPAVIUser@12@XZ", 0, NULL), c.eax), 0);
+    CHECK("glClear, no context: pops 4", call(&c, "opengl32.dll", "glClear", 1, (uint32_t[]){0x4000}), c.esp);
+    CHECK("glGetString, no context", (call(&c, "opengl32.dll", "glGetString", 1, (uint32_t[]){0x1f00}), c.eax), 0);
+
+    snprintf(p, sizeof p, "rm -rf '%s'", tmp);
+    CHECK("cleanup", system(p), 0);
+}
+
 static void msvcp120_binding(const char *dll) {
     enum { MSVCP_BASE = 0x18000000 };
     uint32_t entry = rt_map_pe(dll, MSVCP_BASE);
@@ -488,6 +669,7 @@ int main(int argc, char **argv) {
     uint64_t dt = (rd64(t + 8) - rd64(t)) * 1000 / freq;  // ms
     CHECK("QueryPerformanceCounter ~2 ms", dt >= 2 && dt < 100, 1);
     initializer_imports(&c, &c2);
+    sdl_main_imports(&c);
     msvcp120_binding(argv[2]);
     return fails != 0;
 }

@@ -30,9 +30,15 @@ void rt_process_init(uint32_t exe_base) {
     }
 }
 
-uint32_t rt_thread_init(CPU *c) {
+int rt_thread_reserve(void) {
     int n = __atomic_fetch_add(&NTHREADS, 1, __ATOMIC_RELAXED);
     if (n >= MAX_THREADS) { fprintf(stderr, "too many guest threads\n"); exit(2); }
+    return n;
+}
+
+uint32_t rt_thread_init(CPU *c) { return rt_thread_setup(c, rt_thread_reserve()); }
+
+uint32_t rt_thread_setup(CPU *c, int n) {
     uint32_t guard = STACKS_LO + STACK_SLOT * n, lo = guard + STACK_GUARD, hi = lo + STACK_SIZE;
     if (mprotect(P(guard), STACK_GUARD, PROT_NONE)) { perror("mprotect"); exit(2); }
 
@@ -42,7 +48,7 @@ uint32_t rt_thread_init(CPU *c) {
     wr32(teb + TEB_STACK_LIMIT, lo);
     wr32(teb + TEB_SELF, teb);
     wr32(teb + TEB_PID, GUEST_PID);
-    wr32(teb + TEB_TID, GUEST_PID + 4 * (n + 1));
+    wr32(teb + TEB_TID, THREAD_TID(n));
     wr32(teb + TEB_TLS_POINTER, tls_array);
     wr32(teb + TEB_PEB, PEB_ADDR);
     if (TLS_LEN + TLS_ZERO) {
