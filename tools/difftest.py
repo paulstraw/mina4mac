@@ -26,6 +26,8 @@ GDT = 0x7FFE0000
 SENTINEL = 0x0BADF000
 GPRS = [X.UC_X86_REG_EAX, X.UC_X86_REG_ECX, X.UC_X86_REG_EDX, X.UC_X86_REG_EBX,
         X.UC_X86_REG_ESP, X.UC_X86_REG_EBP, X.UC_X86_REG_ESI, X.UC_X86_REG_EDI]
+# Fixed cpuid answers; must match cpuid_fixed() in runtime/cpu.h.
+CPUID = {0: (1, 0x756e6547, 0x6c65746e, 0x49656e69), 1: (0x000006f6, 0x00000800, 0, 0x07808111)}
 NAMES = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "fs_base"]
 
 
@@ -118,9 +120,17 @@ class Ref:
         for seg in (X.UC_X86_REG_DS, X.UC_X86_REG_ES, X.UC_X86_REG_SS):
             self.mu.reg_write(seg, 2 << 3)
         self.mu.reg_write(X.UC_X86_REG_FS, 3 << 3)
+        self.mu.hook_add(uc.UC_HOOK_INSN, self.cpuid, None, 1, 0, X.UC_X86_INS_CPUID)
         cr0 = self.mu.reg_read(X.UC_X86_REG_CR0)
         self.mu.reg_write(X.UC_X86_REG_CR0, (cr0 & ~4) | 2)
         self.mu.reg_write(X.UC_X86_REG_CR4, self.mu.reg_read(X.UC_X86_REG_CR4) | (3 << 9))
+
+    @staticmethod
+    def cpuid(mu, _):
+        a, b, c, d = CPUID.get(mu.reg_read(X.UC_X86_REG_EAX), (0, 0, 0, 0))
+        for r, v in ((X.UC_X86_REG_EAX, a), (X.UC_X86_REG_EBX, b), (X.UC_X86_REG_ECX, c), (X.UC_X86_REG_EDX, d)):
+            mu.reg_write(r, v)
+        return 1  # skip Unicorn's own cpuid
 
     def run(self, func, regs, xmm, regions, limit=5_000_000):
         mu = self.mu

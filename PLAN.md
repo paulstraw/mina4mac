@@ -169,10 +169,12 @@ Gotchas that already bit us:
   or any difftest `fail`/`native_err` is non-zero. Run it once and record the numbers.
   - `tools/check.sh [seed]` (~6 min; logs in `build/check/`); the baseline is in `tools/lifted_baseline.txt` and rises automatically. Seed 18671: lifted 97059/97087, 28 stubbed; default pass 2250/fail 0/native_err 0; x87 pass 152/fail 0/native_err 0.
   - Fixed a false native_err in difftest: stack, scratch and TEB are now mapped non-exec in Unicorn, so indirect calls into random data count as ref_skip.
-- [ ] Lift the remaining 28 functions. Implement psllq/psrlq/punpck*/paddb/pmovsxbd/rcr/imul r/m8+16, and
+- [x] Lift the remaining 28 functions. Implement psllq/psrlq/punpck*/paddb/pmovsxbd/rcr/imul r/m8+16, and
   cpuid returning fixed values for an SSE2-capable Intel CPU. Leave genuine misdecodes as stubs and list
   their addresses in the note. Verify with `tools/check.sh`, plus `difftest --only` on each newly lifted
   function.
+  - 97087/97087 lifted, 0 stubs (check.sh seed 4242: default 2255 pass, x87 159 pass, 0 fail/native_err). No real misdecodes: 0x874fd0 ran into a jump table after a noreturn `_Xlength_error`, so calls to `NORETURN_IMPORTS` (lift.py) now end a block. Also added more SSE int ops, cmpXXsd, pushfd, segment-reg reads (WoW64 selectors), and cmpxchg8b (not atomic yet). Fixed `orps` being lifted as AND, and the harness now starts with fpu_cw=0x27f.
+  - New `tools/insntest.py` runs single-instruction Unicorn-vs-native tests on real instances, plus `--at <addrs>`. All new ops pass (6607 trials). cpuid values are in `cpuid_fixed` (cpu.h), and difftest hooks Unicorn with the same values. imul r/m16 never occurs in the binary, so it's untested.
 - [ ] Give lock-prefixed instructions and `xchg` with a memory operand real atomic semantics, using clang
   `__atomic` builtins on `MEM + addr`: lock xadd/cmpxchg/cmpxchg8b/add/inc/dec/or/and. Verify with
   `tools/check.sh`, and add a native unit test that hammers `lock xadd` from several host threads through

@@ -47,7 +47,7 @@ int main(int argc, char **argv) {
     }
     FILE *f = fopen(argv[1], "rb");
     uint32_t func, nreg;
-    CPU c = {0};
+    CPU c = {.fpu_cw = 0x27f};  // Windows default: 53-bit precision, round-to-nearest, all masked
     fread(&func, 4, 1, f);
     fread(&c.eax, 4, 9, f);  // eax..edi, fs_base
     fread(c.xmm, 16, 8, f);
