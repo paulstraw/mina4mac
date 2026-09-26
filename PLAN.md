@@ -164,9 +164,11 @@ Gotchas that already bit us:
 
 ### Phase 0: finish the recompiler core
 
-- [ ] Add `tools/check.sh`, which runs the full verification sequence above (survey, build_all, difftest
+- [x] Add `tools/check.sh`, which runs the full verification sequence above (survey, build_all, difftest
   default and `--x87`). It prints a one-line summary per step and exits non-zero if the lifted count drops
   or any difftest `fail`/`native_err` is non-zero. Run it once and record the numbers.
+  - `tools/check.sh [seed]` (~6 min; logs in `build/check/`); the baseline is in `tools/lifted_baseline.txt` and rises automatically. Seed 18671: lifted 97059/97087, 28 stubbed; default pass 2250/fail 0/native_err 0; x87 pass 152/fail 0/native_err 0.
+  - Fixed a false native_err in difftest: stack, scratch and TEB are now mapped non-exec in Unicorn, so indirect calls into random data count as ref_skip.
 - [ ] Lift the remaining 28 functions. Implement psllq/psrlq/punpck*/paddb/pmovsxbd/rcr/imul r/m8+16, and
   cpuid returning fixed values for an SSE2-capable Intel CPU. Leave genuine misdecodes as stubs and list
   their addresses in the note. Verify with `tools/check.sh`, plus `difftest --only` on each newly lifted

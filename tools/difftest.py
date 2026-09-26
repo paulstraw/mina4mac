@@ -100,9 +100,12 @@ class Ref:
         self.mu.mem_map(lo, hi - lo)
         self.mu.mem_write(lo, mem)
         self.d_lo, self.d_hi = self.img.section(".data")
-        self.mu.mem_map(STACK_LO, STACK_SZ)
-        self.mu.mem_map(SCRATCH_LO, SCRATCH_SZ)
-        self.mu.mem_map(TEB, 0x1000)
+        # Random-data regions are non-executable: an indirect call through random input must fault
+        # (ref_skip) rather than run random bytes that native code can't follow.
+        rw = uc.UC_PROT_READ | uc.UC_PROT_WRITE
+        self.mu.mem_map(STACK_LO, STACK_SZ, rw)
+        self.mu.mem_map(SCRATCH_LO, SCRATCH_SZ, rw)
+        self.mu.mem_map(TEB, 0x1000, rw)
         self.mu.mem_map(SENTINEL, 0x1000)
         self.mu.mem_map(GDT, 0x1000)
         # GDT with a flat data segment for fs based at TEB.
