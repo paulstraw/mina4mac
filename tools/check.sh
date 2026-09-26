@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Full verification sequence: survey, build_all, difftest (default and --x87), atomictest, importtest,
+# Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
 # hosttest, envtest, loadtest, undnametest, sdltest, then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -51,6 +51,12 @@ for mode in default x87; do
         echo "difftest $mode (seed $SEED): ok $stats"
     fi
 done
+
+if uv run tools/insntest.py --x87reg --seed "$SEED" >"$LOG/x87regtest.log" 2>&1; then
+    echo "x87regtest: ok $(tail -1 "$LOG/x87regtest.log")"
+else
+    echo "x87regtest: FAIL, see $LOG/x87regtest.log"; status=1
+fi
 
 if uv run tools/atomictest.py >"$LOG/atomictest.log" 2>&1; then
     echo "atomictest: ok $(tail -1 "$LOG/atomictest.log")"

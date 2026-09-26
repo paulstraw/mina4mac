@@ -27,7 +27,8 @@ the HLE CRT's errno at `+0xFF0`.
 
 The launcher's working directory is the game directory. The host file system is drive `Z:` (as in Wine), so
 `GetCurrentDirectoryW` returns e.g. `Z:\Users\me\noitamac\build\game`; `host_path` (hle.c) maps relative and `Z:`
-paths back. stdio does no text-mode CR/LF translation. Only the "C" locale exists. Known folders
+paths back (`NOITAMAC_TRACE_FILES=1` logs every path the guest passes to the file APIs). Game data (`data/`, `mods/`,
+`config.xml`) is copied into the game directory by `tools/setup_game.sh`. stdio does no text-mode CR/LF translation. Only the "C" locale exists. Known folders
 (`SHGetKnownFolderPath`, e.g. `LocalLow`, where the game keeps its saves) live under
 `~/Library/Application Support/noitamac/AppData/`.
 

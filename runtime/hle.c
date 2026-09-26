@@ -2,6 +2,8 @@
 #include "hle.h"
 
 #include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "heap.h"
@@ -14,6 +16,9 @@ uint32_t guest_strdup(const char *s) {
 }
 
 int host_path(const char *win, char *out, size_t n) {
+    static int trace = -1;  // NOITAMAC_TRACE_FILES=1 logs every path the guest hands to the file APIs
+    if (trace < 0) trace = getenv("NOITAMAC_TRACE_FILES") && *getenv("NOITAMAC_TRACE_FILES") != '0';
+    if (trace) fprintf(stderr, "[file] %s\n", win);
     if ((win[0] == 'Z' || win[0] == 'z') && win[1] == ':') win += 2;
     size_t len = strlen(win);
     if (len >= n) return 0;

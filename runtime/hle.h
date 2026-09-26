@@ -9,7 +9,7 @@ uint32_t guest_strdup(const char *s);
 // Windows paths. The host file system appears as drive Z: (as in Wine), so the guest's working directory
 // (the game directory) is e.g. "Z:\Users\me\noitamac\build\game". host_path translates a Windows
 // path (relative, or on Z:) to a host path: the drive is dropped and backslashes become slashes. Returns 0
-// if it doesn't fit in n bytes. win_path does the reverse for an absolute host path.
+// if it doesn't fit in n bytes; NOITAMAC_TRACE_FILES=1 logs each path to stderr. win_path does the reverse for an absolute host path.
 int host_path(const char *win, char *out, size_t n);
 int win_path(const char *host, char *out, size_t n);
 

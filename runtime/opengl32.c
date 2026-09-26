@@ -23,6 +23,12 @@ GL(glEnable, 4, ARG(0))
 GL(glDisable, 4, ARG(0))
 GL(glBlendFunc, 8, ARG(0), ARG(1))
 GL(glPixelStorei, 8, ARG(0), ARG(1))
+GL(glGenTextures, 8, ARG(0), ARG_PTR(1))
+GL(glDeleteTextures, 8, ARG(0), ARG_PTR(1))
+GL(glBindTexture, 8, ARG(0), ARG(1))
+GL(glTexParameteri, 12, ARG(0), ARG(1), ARG(2))
+GL(glTexImage2D, 36, ARG(0), ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6), ARG(7), ARG_PTR(8))
+GL(glTexSubImage2D, 36, ARG(0), ARG(1), ARG(2), ARG(3), ARG(4), ARG(5), ARG(6), ARG(7), ARG_PTR(8))
 
 // glGetString: the host's string, copied into guest memory once per name (NULL without a context).
 HOST_STDCALL(opengl32, glGetString, 4) {

@@ -595,8 +595,8 @@ class FnLifter:
                 src = self.fimem(ops[0]) if m.startswith("fi") else self.fmem(ops[0])
                 self.emit(f"{{ double a_ = ST(0), b_ = {src}; ST(0) = {expr}; }}")
             else:
-                if len(ops) == 1:
-                    d, s_ = self.st_index(ops[0]), 0
+                if len(ops) == 1:  # "fop st(i)" is st(0) op= st(i); "fopp st(i)" is st(i) op= st(0), then pop
+                    d, s_ = (self.st_index(ops[0]), 0) if pop else (0, self.st_index(ops[0]))
                 else:
                     d, s_ = self.st_index(ops[0]), self.st_index(ops[1])
                 if len(ops) == 0:
@@ -608,7 +608,7 @@ class FnLifter:
             f = {"fchs": "-ST(0)", "fabs": "__builtin_fabs(ST(0))", "fsqrt": "__builtin_sqrt(ST(0))"}[m]
             self.emit(f"ST(0) = {f};")
         elif m == "fxch":
-            k = self.st_index(ops[0]) if ops else 1
+            k = self.st_index(ops[-1]) if ops else 1  # capstone gives "fxch st(i)" the operands st(0), st(i)
             self.emit(f"{{ double t_ = ST(0); ST(0) = ST({k}); ST({k}) = t_; }}")
         elif m in ("fcomi", "fucomi", "fcomip", "fucomip"):
             k = self.st_index(ops[1] if len(ops) > 1 else ops[0])

@@ -6,6 +6,7 @@ registers, xmm, flags and memory. Covers instructions that whole-function diffte
 
   uv run tools/insntest.py [--per 20] [--trials 20] [--seed S] [mnemonic ...]
   uv run tools/insntest.py --at 42b24f,8650f7   (specific instruction addresses)
+  uv run tools/insntest.py --x87reg   (synthetic x87 register forms: fld x3; op; fstp to memory)
 """
 import argparse
 import random
@@ -36,6 +37,18 @@ DEFAULT = ["imul", "xadd", "xchg", "cmpxchg", "cmpxchg8b", "rcr", "cpuid", "punp
            "packuswb", "pinsrw", "pshufd", "pmovsxbd", "cmpeqsd", "orps", "pxor", "pand", "pandn", "por",
            "xorps", "xorpd", "andpd"]
 TAIL = b"\x9c\x8f\x05" + struct.pack("<I", FLAGS) + b"\xc3"  # pushfd; pop dword [FLAGS]; ret
+STRIDE = 64  # bytes per test in CODE
+# x87 register forms, which the binary's own instances can't test (x87 registers aren't compared). Each runs
+# as: fld dword [SCRATCH_LO + 0/4/8]; op; fstp dword [SCRATCH_LO + 16 + 4k] for every value left.
+X87_REG = {"d8c1": 0, "d8c9": 0, "d8ca": 0, "d8e1": 0, "d8e9": 0, "d8f1": 0, "d8f9": 0, "dcc1": 0, "dcc9": 0,
+           "dcca": 0, "dce1": 0, "dce9": 0, "dcf1": 0, "dcf9": 0, "dec1": 1, "dec9": 1, "deca": 1, "dee1": 1,
+           "dee9": 1, "def1": 1, "def9": 1, "d9c9": 0, "d9ca": 0, "ddd9": 1, "ddda": 1, "ddd1": 0}  # hex: pops
+
+
+def x87_reg_code(op, pops):
+    loads = b"".join(b"\xd9\x05" + struct.pack("<I", SCRATCH_LO + 4 * k) for k in range(3))
+    stores = b"".join(b"\xd9\x1d" + struct.pack("<I", SCRATCH_LO + 16 + 4 * k) for k in range(3 - pops))
+    return loads + bytes.fromhex(op) + stores
 
 
 def base_mnemonic(m):
@@ -49,6 +62,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--at", type=lambda v: [int(x, 16) for x in v.split(",")], default=[],
                     help="comma-separated hex addresses of specific instructions to test instead")
+    ap.add_argument("--x87reg", action="store_true", help="test the synthetic x87 register forms (X87_REG) instead")
     ap.add_argument("mnemonics", nargs="*", default=DEFAULT)
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -58,35 +72,37 @@ def main():
     for a, (_, m, _) in sorted(prog.insns.items()):
         if base_mnemonic(m) in args.mnemonics:
             by_m.setdefault(base_mnemonic(m), []).append(a)
-    tests = []  # (test addr, original insn addr, mnemonic)
+    tests = []  # (test addr, original insn addr, mnemonic, code bytes without TAIL)
     for a in args.at:
-        tests.append((CODE + 32 * len(tests), a, base_mnemonic(prog.insns[a][1])))
-    for m in [] if args.at else args.mnemonics:
+        tests.append((CODE + STRIDE * len(tests), a, base_mnemonic(prog.insns[a][1]), prog.img.read(a, prog.insns[a][0])))
+    for op, pops in X87_REG.items() if args.x87reg else ():
+        code = x87_reg_code(op, pops)
+        i = next(prog.md.disasm(bytes.fromhex(op), 0))
+        tests.append((CODE + STRIDE * len(tests), None, f"{i.mnemonic} {i.op_str}", code))
+    for m in [] if args.at or args.x87reg else args.mnemonics:
         insts = by_m.get(m, [])
         if not insts:
             print(f"  {m}: no instances in the binary")
         for a in rng.sample(insts, min(args.per, len(insts))):
-            tests.append((CODE + 32 * len(tests), a, m))
+            tests.append((CODE + STRIDE * len(tests), a, m, prog.img.read(a, prog.insns[a][0])))
 
     # Native: one function per test, the lifted instruction then the same flags tail.
     out = ['#include "rt.h"']
-    for t, a, m in tests:
-        i = prog.decode(a)
-        tail = list(prog.md.disasm(TAIL, t + i.size))
+    for t, a, m, code in tests:
         lf = FnLifter(prog, t)
         lf.body_set, lf.callees = set(), set()
-        for ins in [i] + tail:
+        for ins in prog.md.disasm(bytes(code) + TAIL, t):
             lf.cur = ins
             try:
                 lf.lift_insn(ins)
             except Unsupported as e:
-                sys.exit(f"{a:#x} {i.mnemonic} {i.op_str}: unsupported: {e}")
+                sys.exit(f"{m} ({ins.mnemonic} {ins.op_str}): unsupported: {e}")
         out.append(f"void F_{t:08x}(CPU *restrict c) {{")
         out.append("  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
         out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;")
         out.extend(lf.lines)
         out.append("}")
-    out.append("const FnEntry FN_TABLE[] = {" + ",".join(f"{{{t:#x}u,F_{t:08x}}}" for t, _, _ in tests) + "};")
+    out.append("const FnEntry FN_TABLE[] = {" + ",".join(f"{{{t:#x}u,F_{t:08x}}}" for t, *_ in tests) + "};")
     out.append(f"const int FN_COUNT = {len(tests)};")
     out.append("void guest_call(CPU *c, uint32_t t);")
     GEN.mkdir(parents=True, exist_ok=True)
@@ -97,8 +113,8 @@ def main():
 
     ref = Ref(prog)
     ref.mu.mem_map(CODE, 0x10000)
-    for t, a, _ in tests:
-        ref.mu.mem_write(t, prog.img.read(a, prog.insns[a][0]) + TAIL)
+    for t, _, _, code in tests:
+        ref.mu.mem_write(t, bytes(code) + TAIL)
     (MOD / "image.bin").write_bytes(ref.image)
     d_lo, d_hi = prog.img.section(".data")
     data_region = (d_lo, bytes(ref.image[d_lo - prog.img.base:d_hi - prog.img.base]))
@@ -107,14 +123,17 @@ def main():
 
     stats = {}
     failures = []
-    for t, a, m in tests:
+    for t, a, m, _ in tests:
         s = stats.setdefault(m, dict(pass_=0, fail=0, ref_skip=0, native_err=0))
         for _ in range(args.trials):
             regs = [rand_value(rng) if rng.random() < 0.6 else rng.getrandbits(32) for _ in range(8)]
             regs[4] = STACK_LO + STACK_SZ - 0x4000
             stack = bytearray(rand_block(rng, STACK_SZ))
             struct.pack_into("<I", stack, regs[4] - STACK_LO, SENTINEL)
-            regions = [(STACK_LO, bytes(stack)), (SCRATCH_LO, rand_block(rng, SCRATCH_SZ)), (TEB, rand_block(rng, 0x1000))]
+            scratch = bytearray(rand_block(rng, SCRATCH_SZ))
+            if a is None:  # x87 register form: ordinary float operands
+                struct.pack_into("<3f", scratch, 0, *(rng.uniform(-1e3, 1e3) for _ in range(3)))
+            regions = [(STACK_LO, bytes(stack)), (SCRATCH_LO, bytes(scratch)), (TEB, rand_block(rng, 0x1000))]
             xmm = bytes(rng.getrandbits(8) for _ in range(128)) if rng.random() < 0.5 else \
                 b"".join(struct.pack("<2d", rng.uniform(-1e3, 1e3), rng.uniform(-1e3, 1e3)) for _ in range(8))
             ref.mu.reg_write(X.UC_X86_REG_EFLAGS, 0x202)  # native starts with all status flags clear
@@ -158,10 +177,13 @@ def main():
     print(total)
     seen = set()
     for a, m, why in failures:
-        if a not in seen:
-            seen.add(a)
-            i = prog.decode(a)
-            print(f"  {a:#x} {i.mnemonic} {i.op_str}: {why}")
+        if (a, m) not in seen:
+            seen.add((a, m))
+            if a is None:
+                print(f"  {m}: {why}")
+            else:
+                i = prog.decode(a)
+                print(f"  {a:#x} {i.mnemonic} {i.op_str}: {why}")
     sys.exit(1 if total["fail"] or total["native_err"] else 0)
 
 

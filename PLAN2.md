@@ -68,12 +68,14 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
 
 ### Phase 4: past startup
 
-- [ ] Game data. Add `tools/setup_game.sh`, which rsyncs the non-binary game files (`data/`, `mods/`,
+- [x] Game data. Add `tools/setup_game.sh`, which rsyncs the non-binary game files (`data/`, `mods/`,
   `config.xml`, and anything else the logger asks for) from the source install (overridable) into
   `build/game`. It must be idempotent, and it must never cause anything under `build/` to be committed.
   Then fix the file-API gaps until the logger stops reporting missing `data/ui_gfx` and translations.
   - Record in the note which files the game opens (including how it reads `data.wak`) and any path
     translation issues (`Z:\`, case sensitivity, `/` vs `\`).
+  - `tools/setup_game.sh [src]` (`NOITA_SRC`/`NOITA_DIR`) rsyncs data/, mods/, config.xml and the _branch/_version/_release_notes/screenshot_paths files; refuses an un-ignored destination in the repo. No file-API gaps: logger is clean. Opens (`NOITAMAC_TRACE_FILES=1`): `data/data.wak` twice (via msvcp `_wfsopen`; all of `data/…` incl. ui_gfx/translations comes from it, read whole through an inlined `basic_filebuf` = 42.5M `fgetc` calls, ~1 s, since our FILE has no guest buffer), `data/icon.bmp`, config.xml, `mods\*` (FindFirstFileW) + each mod's mod.xml/compatibility.xml/settings.lua, LocalLow save_shared/config.xml and save00/mod_*. Paths are relative with `/` or absolute `Z:\…` with `\`; APFS is case-insensitive, so no case issues.
+  - Also fixed on the way: x87 lifter bugs only msvcp120 hits (`fxch st(i)` was a no-op; one-operand `fadd/fmul/fdiv st(i)` wrote st(i), not st(0)) → stack-cookie failure in float parsing; new `insntest.py --x87reg` (x87regtest in check.sh). opengl32.c forwards glGen/Delete/BindTexture, glTexParameteri, glTex(Sub)Image2D. check.sh seed 1357 all ok; launcher again stops at `fmodstudio!FMOD::Studio::System::create` from 0x47a6fb.
 - [ ] FMOD silent stub (`runtime/fmod_stub.c`). Implement all 42 imports with `HOST(...)` and the
   mangled names.
   - Handles are small guest-heap objects so `isValid` and `get/setUserData` behave correctly.
