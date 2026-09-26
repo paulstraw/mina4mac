@@ -21,6 +21,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pe import MODULES, build_dir, load  # noqa: E402
 
 
+# Mnemonics that compiled 32-bit user code never contains; seeing one means we are decoding data.
+JUNK = {"in", "out", "insb", "insw", "insd", "outsb", "outsw", "outsd", "arpl", "bound", "les", "lds",
+        "retf", "iretd", "hlt", "into", "int1", "salc", "aam", "aad", "daa", "das", "aaa", "aas",
+        "lcall", "ljmp", "cli", "sti", "pushal", "popal", "popaw", "pushaw", "xlatb", "loope", "loopne",
+        "sldt", "str", "lsl", "lar"}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("module", nargs="?", default="noita", choices=MODULES)
@@ -48,12 +55,35 @@ def main():
     unresolved_indirect_jmp = []
     import_calls = collections.Counter()
 
-    work = [img.entry]
-    work += [v for s, v in text_ptrs.items() if not (t_lo <= s < t_hi)]  # pointers from data sections
-    work += [v for v in img.exports if t_lo <= v < t_hi]
+    # Some DLLs (msvcp120) merge .rdata into .text, so pointer seeds may point at data. There, weak
+    # seeds (pointers, exports, relocated immediates) must look like code, and .text-resident
+    # pointers (vtables in the merged rdata) are seeds too once their site is known not to be code.
+    merged = any(t_lo <= img.base + d.VirtualAddress < t_hi
+                 for d in img.pe.OPTIONAL_HEADER.DATA_DIRECTORY[:11] if d.Size)
+
+    def plausible(addr, limit=64):
+        """Straight-line decode from addr reaches ret/jmp without junk that compilers never emit."""
+        if not merged:
+            return True
+        for _ in range(limit):
+            if not t_lo <= addr < t_hi:
+                return False
+            off = addr - t_lo
+            i = next(md.disasm(text[off:off + 16], addr, 1), None)
+            if i is None or i.mnemonic in JUNK or i.bytes[:2] == b"\0\0" or \
+                    i.mnemonic in ("push", "pop") and i.op_str in ("cs", "ds", "es", "ss"):
+                return False
+            if i.mnemonic in ("ret", "jmp") or addr in insns:
+                return True
+            addr += i.size
+        return True
+
+    seeds = [v for s, v in text_ptrs.items() if not (t_lo <= s < t_hi)]  # pointers from data sections
+    seeds += [v for v in img.exports if t_lo <= v < t_hi]
+    seeds = [v for v in seeds if plausible(v)]
+    work = [img.entry] + seeds
     call_targets.add(img.entry)
-    call_targets.update(v for s, v in text_ptrs.items() if not (t_lo <= s < t_hi))
-    call_targets.update(v for v in img.exports if t_lo <= v < t_hi)
+    call_targets.update(seeds)
     seen_starts = set()
 
     def decode_from(addr):
@@ -70,7 +100,8 @@ def main():
                 for op in i.operands:
                     if op.type == x86.X86_OP_IMM:
                         v = op.imm & 0xFFFFFFFF
-                        if t_lo <= v < t_hi and any(r in reloc_site_set for r in range(addr + 1, nxt)):
+                        if t_lo <= v < t_hi and any(r in reloc_site_set for r in range(addr + 1, nxt)) \
+                                and plausible(v):
                             call_targets.add(v)
                             work.append(v)
             if i.group(x86.X86_GRP_CALL) or i.group(x86.X86_GRP_JUMP):
@@ -109,13 +140,26 @@ def main():
                 return
             addr = nxt
 
+    def code_bytes():
+        cov = set()
+        for a, (sz, _, _) in insns.items():
+            cov.update(range(a, a + sz))
+        return cov
+
     t0 = time.time()
     while work:
-        a = work.pop()
-        if a in seen_starts:
-            continue
-        seen_starts.add(a)
-        decode_from(a)
+        while work:
+            a = work.pop()
+            if a in seen_starts:
+                continue
+            seen_starts.add(a)
+            decode_from(a)
+        if merged:
+            cov = code_bytes()
+            new = {v for s, v in text_ptrs.items() if t_lo <= s < t_hi and s not in cov
+                   and v not in seen_starts and v not in cov and plausible(v)}
+            call_targets.update(new)
+            work.extend(new)
     dt = time.time() - t0
 
     covered = sum(s for s, _, _ in insns.values())

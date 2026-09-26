@@ -196,12 +196,14 @@ Gotchas that already bit us:
   noita.exe results must be unchanged: the same survey numbers and a clean `tools/check.sh`.
   - `pe.MODULES` holds name → (file, base): noita 0x400000, DLLs packed from 0x18000000 (msvcp120 0x18000000, …, SDL2 0x19100000), clear of heap/thunks/difftest areas. `load(module)` rebases via relocs; `Image.exports` added and discover seeds exports. `discover.py`/`survey.py [module]`, `Program(module)`, `build_all.py [module ...]` (chunks in `build/<m>/gen/`, combined decls/FN_TABLE in `build/gen_all/`). pkl files, image.bin and test scratch C (`testgen/`) now live in `build/noita/`.
   - noita discover.pkl is byte-identical to before. check.sh seed 5150: 97087/97087 lifted, 0 stubs; default 2247 / x87 157 pass, 0 fail/native_err; atomictest ok; insntest 6830 pass; bench unchanged (12.7 ns rng).
-- [ ] Discover and survey `msvcp120.dll` at a chosen base. Record the lift coverage and the list of what
+- [x] Discover and survey `msvcp120.dll` at a chosen base. Record the lift coverage and the list of what
   it imports (dll!name counts) in the note.
   - Decision rule: if at least 99.5% of its functions lift, it is recompiled like the exe (the plan
     assumes this).
   - Otherwise note that it must be reimplemented natively.
   - msvcr120 and KERNEL32 are always implemented natively in C (HLE).
+  - **Recompile it.** At 0x18000000, 3,033/3,042 functions lift (99.7%). The 3 real misses are `lock bts`, `lock btr` and `cbw` (0x180126cb/d8, 0x18027770); the other 6 are false seeds in data. msvcp120 merges .rdata into .text, so discover.py now requires pointer/export seeds to decode as plausible code (`plausible`, `JUNK`) and seeds vtables that sit in .text. noita's discover.pkl is byte-identical.
+  - Imports: MSVCR120 173 names / 805 call sites (heavy: free 30, ??3 64, ConcRT PPL locks/events, exception ctors, sprintf_s 24, localeconv 18, `_errno` 19, stdio f* and wide file ops); KERNEL32 32 names / 77 sites (CriticalSection, Encode/DecodePointer, File*W, MultiByte/WideChar, GetLastError 12). 1,200 exports. Full per-name counts: `import_calls` in `build/msvcp120/discover.pkl`.
 
 ### Phase 2: runtime and startup
 
