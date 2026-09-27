@@ -7,6 +7,7 @@
 //   MINA4MAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
 //   MINA4MAC_JOBLOG=<file>          log the job system (worker jobs, main-thread waits), see joblog.c
 //   MINA4MAC_CPUS, MINA4MAC_QOS, MINA4MAC_YIELD   scheduling knobs, see sched.h
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,7 +28,21 @@ static const struct { const char *file; uint32_t base, entry; } DLLS[] = {
 };
 enum { NDLLS = sizeof DLLS / sizeof *DLLS, DLL_PROCESS_ATTACH = 1 };
 
+#ifdef MINA4MAC_PGO_GEN
+// The instrumented build (tools/build_all.py --pgo gen) writes its profile at exit, but perfbench stops the game
+// with SIGTERM: write it from the handler too. Guest threads keep counting meanwhile; the profile is a sample.
+int __llvm_profile_write_file(void);
+static void pgo_term(int sig) {
+    (void)sig;
+    __llvm_profile_write_file();
+    _exit(0);
+}
+#endif
+
 int main(int argc, char **argv) {
+#ifdef MINA4MAC_PGO_GEN
+    signal(SIGTERM, pgo_term);
+#endif
     const char *dir = getenv("NOITA_DIR");
     if (!dir || !*dir) dir = "build/game";
     char path[4096];

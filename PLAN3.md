@@ -103,17 +103,40 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
 
 ### Phase 10: compiler-level wins (no lifter changes)
 
-- [ ] Profile-guided optimization. Build with `-fprofile-instr-generate`, run perfbench plus a menu → new game →
+- [x] Profile-guided optimization. Build with `-fprofile-instr-generate`, run perfbench plus a menu → new game →
   play sequence, merge with `llvm-profdata`, and rebuild with `-fprofile-instr-use`. This should fix block layout
   and inlining in hot `F_*` functions and give the most gain per unit of effort. Document the workflow in the README,
   because profiles are derived from the user's own game and must not be committed.
+  - `tools/pgo.sh [gen|train|merge|order|use]`, `tools/build_all.py --pgo gen|use`. IR PGO (`-fprofile-generate`), trained on perfbench flood + heavy only (the menu needs clicks).
+    The instrumented game is ~12× slower (flood 190 ms/frame, counter contention across 9 workers), so heavy stops at perfbench's
+    5-minute cap (~990 frames); main.c writes the profile on SIGTERM (`MINA4MAC_PGO_GEN`). Training ≈ 10 min, build 2.5 min.
+    No profile mismatch warnings; binary 51.4 → 45.7 MB.
+  - Heavy A/B (build/perfab/20260927-152744, 3 pairs): fps +1.4%, work_ms −1.7% (ranges overlap), cpu_ms −1.4%. Noise-level.
+  - Why so little: the profile's top 10 functions are 53% of executed blocks, led by `guest_call` (3.8e9 calls), which is already a
+    tight tail call. The cost is the call boundary (Phase 11), which PGO can't see through.
+  - Kept as opt-in tooling (README); the default build doesn't use it. **`tools/check.sh` not yet run on these changes** (it opens
+    the game window; the default build only changes by an `#ifdef`'d SIGTERM handler, compile-checked both ways).
+  - Hot imports from the profile, for Phase 12: `call_thunk` 480M calls; `fgetc` 100M (loading), `QueryPerformanceCounter` 67M and
+    `__crtSleep` 18M (wait loops, inflated by the slow run), `floor` 38M, `operator new/delete` 30M/27M, libm sqrt/sin/cos 17–21M,
+    memset/memcpy 16–19M.
 - [ ] Code layout: an order file (`-Wl,-order_file`) from the profile, to cluster hot functions and cut i-cache and
   iTLB misses in the 50 MB binary. Try it with and without PGO.
+  - `tools/pgo_order.py` (all 14,469 executed functions, by block-count sum; the top 1,000 are 99.7% of it), `build_all.py --order`.
+  - PGO + order vs no PGO, heavy, 4 pairs (build/perfab/20260927-154039): fps +0.9%, work_ms −0.3%, cpu_ms −7.2%, cpu_p95 −5.2%.
+    Main-thread CPU drops, but main mostly waits for the workers, so frame time doesn't move.
+  - Still to do: the order-only A/B (build/mina4mac.order vs build/mina4mac.nopgo, not run), then decide.
 - [ ] Try `-O3`, and ThinLTO over the chunks (build time matters: record it).
+  - Likely the more useful of the two: `build_all.py` spreads functions round-robin over 128 chunks, so a direct callee is almost
+    never in its caller's chunk and can't be inlined (e.g. `GetCellPtr`, 3%). Grouping callers and callees into the same chunk is a cheaper
+    alternative to try.
 - [ ] Check whether `-fno-strict-aliasing` and `-ffp-contract=off` can be narrowed. Keep `fp-contract=off` for x87
   and SSE code (determinism), but check the ones that only guard integer code.
 
 ### Phase 11: the call boundary
+
+Plan (2026-09-27): after ThinLTO, do the per-site inline caches first (about half a session) as the checkpoint. If they give ≥5% on
+heavy, do register-sync liveness (1–2 sessions, riskiest); if not, re-profile before investing there. Estimate for the whole phase: 2–4
+sessions. Making `tools/determinism.sh` run unattended (like perfbench with `-gamemode 0`) would make lifter changes cheaper to verify.
 
 - [ ] Cheaper register sync.
   - Use liveness at call sites: don't reload registers the caller overwrites before reading them, and don't store

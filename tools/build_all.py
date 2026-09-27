@@ -7,6 +7,11 @@ Per-module chunks go in build/<module>/gen/; the combined decls.h, FN_TABLE and 
 build/gen_all/. Functions the lifter can't handle yet become stubs that report guest_unimpl.
 
   uv run tools/build_all.py [module ...]
+  uv run tools/build_all.py --pgo gen    instrumented build (IR PGO): runs add to build/pgo/raw/*.profraw
+  uv run tools/build_all.py --pgo use    optimize with build/pgo/mina4mac.profdata (tools/pgo.sh makes both)
+  uv run tools/build_all.py --order      link with the order file build/pgo/mina4mac.order (hot functions first)
+
+Profiles come from the user's own game and stay in build/ (never commit them).
 """
 import argparse
 import multiprocessing as mp
@@ -32,6 +37,10 @@ LUAJIT_LIB = LUAJIT_BUILD / "src/libluajit.a"
 # Lua errors unwind through the bridge (external unwinding), which restores guest state in cleanups.
 LUA_CFLAGS = ["-I", str(LUAJIT_SRC / "src"), "-fexceptions"]
 CHUNKS = 128
+PGO_DIR = ROOT / "build/pgo"
+PGO_RAW = PGO_DIR / "raw"  # the instrumented binary writes default_<signature>.profraw here, merging runs
+PGO_DATA = PGO_DIR / "mina4mac.profdata"
+PGO_ORDER = PGO_DIR / "mina4mac.order"
 _prog = None
 
 
@@ -70,12 +79,24 @@ def _sdl_config(flag):
     return subprocess.run(["sdl2-config", flag], capture_output=True, text=True, check=True).stdout.split()
 
 
-def _cc(src):
+def _pgo_flags(mode):
+    """Compile and link flags for --pgo gen|use (none without --pgo)."""
+    if mode == "gen":  # MINA4MAC_PGO_GEN: main.c writes the profile when perfbench stops the game with SIGTERM
+        return [f"-fprofile-generate={PGO_RAW}", "-DMINA4MAC_PGO_GEN"]
+    if mode == "use":
+        if not PGO_DATA.exists():
+            sys.exit(f"no {PGO_DATA}: make one with tools/pgo.sh")
+        return [f"-fprofile-use={PGO_DATA}"]
+    return []
+
+
+def _cc(job):
+    src, extra = job
     # Chunk objects sit next to their sources; runtime objects go in GEN.
     obj = (src.parent if src.name.startswith("chunk") else GEN) / (src.stem + ".o")
     sdl = _sdl_config("--cflags") if src.stem.startswith("sdl2") and src.stem != "sdl2_stdlib" else []
     lua = LUA_CFLAGS if src.name in LUA else []
-    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl, *lua,
+    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl, *lua, *extra,
                     "-I", str(ROOT / "runtime"), "-I", str(GEN), str(src), "-o", str(obj)], check=True)
     return obj
 
@@ -83,7 +104,13 @@ def _cc(src):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("modules", nargs="*", choices=MODULES)
-    modules = ap.parse_args().modules or ["noita", "msvcp120"]
+    ap.add_argument("--pgo", choices=("gen", "use"), help="build instrumented, or with the merged profile")
+    ap.add_argument("--order", action="store_true", help=f"link with {PGO_ORDER.relative_to(ROOT)}")
+    args = ap.parse_args()
+    modules = args.modules or ["noita", "msvcp120"]
+    pgo = _pgo_flags(args.pgo)
+    if args.order and not PGO_ORDER.exists():
+        sys.exit(f"no {PGO_ORDER}: make one with tools/pgo.sh order")
     GEN.mkdir(parents=True, exist_ok=True)
     starts_by_mod = {}
     for m in modules:
@@ -116,18 +143,21 @@ def main():
     launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c", "gl_gen.c"]
     srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c", GEN / "gl_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
     with mp.Pool(os.cpu_count()) as pool:
-        objs = pool.map(_cc, srcs)
+        objs = pool.map(_cc, [(s, pgo) for s in srcs])
     t2 = time.time()
     only = {"harness", "bench"} | {Path(n).stem for n in launcher}
     common = [str(o) for o in objs if o.stem not in only]
     exe = ROOT / "build/harness_all"
-    subprocess.run(["clang", *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
-    subprocess.run(["clang", *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
-    subprocess.run(["clang", *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
+    link = ["clang", *pgo[:1]]  # the instrumented build links the profile runtime
+    if args.order:  # the hot functions of the launcher; harness and bench just get the same layout
+        link += [f"-Wl,-order_file,{PGO_ORDER}"]
+    subprocess.run([*link, *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
+    subprocess.run([*link, *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
+    subprocess.run([*link, *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
                     str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/mina4mac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
-    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}")
+    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}")
     print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 

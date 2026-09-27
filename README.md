@@ -34,3 +34,9 @@ install, run the script again. Saves are in `~/Library/Application Support/mina4
 `PLAN.md` and `PLAN2.md` describe the design and record the history. The tools work on a copy of the game in
 `build/game`: copy the binaries there, then `tools/setup_game.sh` adds `data/` and `mods/`.
 `uv run tools/build_all.py` builds `build/mina4mac`, and `tools/check.sh` runs the verification sequence.
+
+Optional profile-guided build: `tools/pgo.sh` builds an instrumented `build/mina4mac`, trains it on the perfbench
+scenes (`tools/perfbench.sh install mina4mac` first; about 10 minutes, since the instrumented game runs ~12× slower),
+merges the profile into `build/pgo/mina4mac.profdata`, writes an order file (hottest functions first) and rebuilds
+with both (`tools/build_all.py --pgo use --order`). The profile is derived from your own copy of the game, so it
+stays in `build/` and is never committed. The gain is small (see `PLAN3.md`, Phase 10), and the default build doesn't use it.
