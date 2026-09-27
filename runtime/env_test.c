@@ -476,7 +476,8 @@ static void sdl_main_imports(CPU *cp) {
 
     // Galaxy offline, GL with no context current (a no-op, still popping its stdcall args).
     CHECK("Galaxy User() = NULL", (call(&c, "Galaxy.dll", "?User@api@galaxy@@YAPAVIUser@12@XZ", 0, NULL), c.eax), 0);
-    // FMOD silent stub: handles, user data, version, empty banks, per-path descriptions.
+    // FMOD bridge over the silent stub backend: handles, user data, version, empty banks, per-path descriptions.
+    setenv("NOITAMAC_AUDIO", "stub", 1);
 #define FS(name, ...) (call(&c, "fmodstudio.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
     uint32_t fo = heap_calloc(4, 4), fsys, fev, fev2, finst, fbuf = heap_alloc(64);
     CHECK("FMOD create", FS("?create@System@Studio@FMOD@@SG?AW4FMOD_RESULT@@PAPAV123@I@Z", fo, 0x20105), 0);
@@ -508,6 +509,9 @@ static void sdl_main_imports(CPU *cp) {
     CHECK("FMOD instance isValid", FS("?isValid@EventInstance@Studio@FMOD@@QBG_NXZ", finst) & 0xff, 1);
     FS("?release@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@XZ", finst);
     CHECK("FMOD released instance invalid", FS("?isValid@EventInstance@Studio@FMOD@@QBG_NXZ", finst) & 0xff, 0);
+    CHECK("FMOD released instance: invalid handle", FS("?start@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@XZ", finst), 30);
+    FS("?createInstance@EventDescription@Studio@FMOD@@QBG?AW4FMOD_RESULT@@PAPAVEventInstance@23@@Z", fev, fo);
+    CHECK("FMOD reused slot, new handle", rd32(fo) != finst && FS("?isValid@EventInstance@Studio@FMOD@@QBG_NXZ", finst) == 0, 1);
     CHECK("FMOD setParameterByName pops 16", call(&c, "fmodstudio.dll", "?setParameterByName@EventInstance@Studio@FMOD@@QAG?AW4FMOD_RESULT@@PBDM_N@Z",
                                                   4, (uint32_t[]){finst, gs("p"), 0, 0}), c.esp);
     FS("?release@System@Studio@FMOD@@QAG?AW4FMOD_RESULT@@XZ", fsys);

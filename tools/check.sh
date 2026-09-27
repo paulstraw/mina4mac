@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
-# hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, fmodtest (if FMOD is set up), then a launcher run (informational: prints where build/noitamac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
-# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest/gltest fails. A higher lifted count raises the baseline.
+# difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest/gltest/fmodtest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
 set -uo pipefail
 cd "$(dirname "$0")/.."
@@ -126,6 +126,18 @@ if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I run
     echo "gltest: ok $(grep -c ' ok ' "$LOG/gltest.log") checks"
 else
     echo "gltest: FAIL, see $LOG/gltest.log"; status=1
+fi
+
+# fmodtest needs the macOS FMOD Engine in build/fmod_api (tools/setup_fmod.sh; the user's own download, so it's
+# skipped without it) and the game's banks (tools/setup_game.sh). FMOD_REAL_HEADERS checks fmod.h against the SDK.
+if [ ! -f build/fmod_api/lib/libfmodstudio.dylib ]; then
+    echo "fmodtest: skipped (no build/fmod_api: run tools/setup_fmod.sh)"
+elif clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -DFMOD_REAL_HEADERS -I build/fmod_api/inc -I runtime \
+        runtime/fmod_test.c runtime/fmod.c runtime/fmod_stub.c runtime/rt.c runtime/proc.c runtime/heap.c runtime/hle.c \
+        -o build/fmodtest >"$LOG/fmodtest.log" 2>&1 && build/fmodtest >>"$LOG/fmodtest.log" 2>&1; then
+    echo "fmodtest: ok $(grep -c ' ok ' "$LOG/fmodtest.log") checks, $(grep -m1 'FMOD runtime' "$LOG/fmodtest.log" | sed 's/^ *//')"
+else
+    echo "fmodtest: FAIL, see $LOG/fmodtest.log"; status=1
 fi
 
 # The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.

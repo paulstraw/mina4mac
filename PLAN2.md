@@ -213,7 +213,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Add a stress test if feasible.
   - `tools/memorder.py` (run by lift/build_all, cached in build/<m>/memorder.pkl) marks: all of the 80 functions with locked ops (spinlocks, atomic<bool> xchg stores, shared_ptr/job counts), loops calling a yield import (153 fns, e.g. the job wait `while (job[+0x1c] > 0) _Thrd_yield()` at 0x726a51), pure spin loops (1: 0x84aba0, which plain clang compiled to `b .`, a latent hang), and accesses to globals used by locked ops. That's 20k noita + 2.2k msvcp120 insns, lifted with `rd*_acq`/`wr*_rel` (cpu.h; LDAPR/STLR = TSO's reorderings; esp/ebp-based, x87/SSE and string ops stay plain). `NOITAMAC_TSO=auto|all|off` picks it. The rest of the sync is mutexes, condition variables and ConcRT, which the HLE already orders.
   - atomictest now also runs real game insns ordered vs plain: ordered unlock/MP/spin are exact; plain `mov` unlock loses ~1000 of 1.6M updates, and the plain spin hangs. check.sh seed 8013 all ok. Perfbench uncapped, auto vs off: median ~43.5 vs 45.2 fps (within the ±7% noise; no hot function is ordered). Both builds sometimes stall for minutes in SwapWindow (`_CGSWindowIsOrderedIn`, window server), a pre-existing issue unrelated to this task.
-- [ ] Real audio. The FMOD Engine is downloaded: `~/Downloads/fmodstudioapi20123mac-installer.dmg`
+- [x] Real audio. The FMOD Engine is downloaded: `~/Downloads/fmodstudioapi20123mac-installer.dmg`
   (2.01.23, the last 2.01.x; the game ships 2.01.05). Inside the volume "FMOD Programmers API Mac", the
   files are `FMOD Programmers API/api/{core,studio}/lib/libfmod{,studio}.dylib` (universal x86_64+arm64)
   and `api/{core,studio}/inc/`.
@@ -224,6 +224,8 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Check that the game's `.bank` files load in the runtime version we get. If only a newer 2.x is
     available, note the compatibility result.
   - Keep `NOITAMAC_AUDIO=stub` working.
+  - `runtime/fmod.c` bridges to the C API via a table (`fmod.h`, own declarations; dlopens `build/fmod_api/lib`, not `build/fmod`, which is the fmod.dll module dir); `fmod_stub.c` is now the silent backend behind the same table. `NOITAMAC_AUDIO=fmod|stub` (default: fmod if it loads), `NOITAMAC_FMOD=<lib dir>`, `NOITAMAC_AUDIO_WAV=<file>` records the mix. Handles are generation-checked table entries, retired on DESTROYED. Callbacks run on FMOD's Studio thread, which gets a guest thread and a 64 MB stack (Thread_SetAttributes).
+  - All 25 banks (987 events) load in 2.01.23, and the game's 0x20105 header version is accepted. fmodtest (check.sh, 50 checks; skipped without build/fmod_api) checks the prototypes against the SDK. check.sh seed 14519 all ok. In-game: 168 events started in 70 s, no "FMOD error" logs; setParameterByName("lowpass") returns 74/30 at 0x47afdd, whose result the game ignores. The WAV capture has menu music, the click and in-game sound, but nobody has listened to it yet.
 - [ ] Stubs for the remaining imports: WININET and WS2_32 fail cleanly (offline), `GetOpenFileNameA`
   returns cancel, `timeBeginPeriod`, `GetActiveWindow`, `CoTaskMemFree`, and the crash-handler thread
   APIs (`SuspendThread`/`GetThreadContext`) if they're reached. Check that nothing aborts in a
