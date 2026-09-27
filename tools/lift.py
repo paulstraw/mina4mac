@@ -4,6 +4,7 @@ Each guest function becomes `void F_<addr>(CPU *c)`. General-purpose registers a
 C locals for the body of the function and are synced to `c` around calls and at exit, so clang can
 keep them in host registers and drop flag computations nobody reads.
 """
+import os
 import pickle
 import re
 import sys
@@ -65,6 +66,20 @@ class Program:
         self.md.detail = True
         self.noreturn_ops = {f"dword ptr [{slot:#x}]" for slot, (_, name) in self.img.imports.items()
                              if name in NORETURN_IMPORTS}
+        # Memory ordering (tools/memorder.py): NOITAMAC_TSO=auto (default) gives the instructions it
+        # finds acquire loads and release stores; all does that for every instruction; off for none.
+        self.tso_mode = os.environ.get("NOITAMAC_TSO", "auto")
+        if self.tso_mode not in ("auto", "all", "off"):
+            raise ValueError(f"NOITAMAC_TSO={self.tso_mode}")
+        self._ordered = None
+
+    def is_ordered(self, a):
+        if self.tso_mode != "auto":
+            return self.tso_mode == "all"
+        if self._ordered is None:
+            from memorder import ordered_insns
+            self._ordered = ordered_insns(self)[1]
+        return a in self._ordered
 
     def is_noreturn_call(self, a):
         _, m, o = self.insns[a]
@@ -149,7 +164,7 @@ class FnLifter:
         if op.type == x86.X86_OP_IMM:
             return f"({UT[size]}){op.imm & ((1 << (8 * size)) - 1):#x}u"
         if op.type == x86.X86_OP_MEM:
-            return f"{RD[size]}({self.addr(op.mem)})"
+            return f"{RD[size]}{self.order(op, '_acq')}({self.addr(op.mem)})"
         raise Unsupported("operand")
 
     def wr(self, op, val, size=None):
@@ -167,9 +182,17 @@ class FnLifter:
             else:
                 raise Unsupported(f"reg {n}")
         elif op.type == x86.X86_OP_MEM:
-            self.emit(f"{WR[size]}({self.addr(op.mem)}, ({UT[size]})({val}));")
+            self.emit(f"{WR[size]}{self.order(op, '_rel')}({self.addr(op.mem)}, ({UT[size]})({val}));")
         else:
             raise Unsupported("write operand")
+
+    def order(self, op, suffix):
+        """`suffix` if this access needs x86 ordering (Program.is_ordered), else "". esp/ebp-based
+        accesses are taken to be stack locals and stay plain (ebp is the frame pointer in MSVC code)."""
+        m = op.mem
+        if m.base in (x86.X86_REG_ESP, x86.X86_REG_EBP) and m.segment != x86.X86_REG_FS:
+            return ""
+        return suffix if self.p.is_ordered(self.cur.address) else ""
 
     def xmm(self, op):
         n = self.reg_name(op.reg) if op.type == x86.X86_OP_REG else None

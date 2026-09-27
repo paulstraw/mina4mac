@@ -204,13 +204,15 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     syncs around calls, x87 helpers and bridge overhead.
   - Record the before/after numbers.
   - Wrapped up early at the user's request (finish the game first; deeper perf work later). `tools/perfbench.sh` + `tools/perfbench` mod (seed-pinned water/oil/lava flood, 1800 frames; `-gamemode 0` skips the menu; `UNCAPPED=1`). Native 55.7 fps capped / 57–65 uncapped; Wine 50.9 / 42.8. Profile (`sample`): `guest_call` ~15% of guest CPU, main thread ~21% in a `Sleep(0)` wait for 8 workers (~39% busy). Inlining guest_call at call sites was ~5% *slower* (A/B interleaved, +4 MB code), so it was reverted: no hotspot fix landed.
-- [ ] Memory ordering audit.
+- [x] Memory ordering audit.
   - Plain loads and stores have ARM64 ordering, not x86 TSO. With about 18 guest threads that can break
     lock-free code that relies on TSO.
   - Find the lock-free patterns in the exe (volatile flags, hand-rolled queues, double-checked init),
     decide where fences are needed, and add a lifter option such as emitting acquire/release for
     identified addresses or functions.
   - Add a stress test if feasible.
+  - `tools/memorder.py` (run by lift/build_all, cached in build/<m>/memorder.pkl) marks: all of the 80 functions with locked ops (spinlocks, atomic<bool> xchg stores, shared_ptr/job counts), loops calling a yield import (153 fns, e.g. the job wait `while (job[+0x1c] > 0) _Thrd_yield()` at 0x726a51), pure spin loops (1: 0x84aba0, which plain clang compiled to `b .`, a latent hang), and accesses to globals used by locked ops. That's 20k noita + 2.2k msvcp120 insns, lifted with `rd*_acq`/`wr*_rel` (cpu.h; LDAPR/STLR = TSO's reorderings; esp/ebp-based, x87/SSE and string ops stay plain). `NOITAMAC_TSO=auto|all|off` picks it. The rest of the sync is mutexes, condition variables and ConcRT, which the HLE already orders.
+  - atomictest now also runs real game insns ordered vs plain: ordered unlock/MP/spin are exact; plain `mov` unlock loses ~1000 of 1.6M updates, and the plain spin hangs. check.sh seed 8013 all ok. Perfbench uncapped, auto vs off: median ~43.5 vs 45.2 fps (within the ±7% noise; no hot function is ordered). Both builds sometimes stall for minutes in SwapWindow (`_CGSWindowIsOrderedIn`, window server), a pre-existing issue unrelated to this task.
 - [ ] Real audio. The FMOD Engine is downloaded: `~/Downloads/fmodstudioapi20123mac-installer.dmg`
   (2.01.23, the last 2.01.x; the game ships 2.01.05). Inside the volume "FMOD Programmers API Mac", the
   files are `FMOD Programmers API/api/{core,studio}/lib/libfmod{,studio}.dylib` (universal x86_64+arm64)

@@ -53,6 +53,24 @@ static inline double rdf64(uint32_t a) { return *(f64u *)P(a); }
 static inline void wrf32(uint32_t a, float v) { *(f32u *)P(a) = v; }
 static inline void wrf64(uint32_t a, double v) { *(f64u *)P(a) = v; }
 
+// Ordered accesses for guest code that relies on x86 TSO (chosen by tools/memorder.py): acquire loads
+// and release stores, i.e. LDAPR/STLR, which allow only TSO's reordering (a store, then a load of
+// another address). They also stop clang from hoisting a polled load out of a spin loop. ARM64
+// atomics fault when misaligned, so misaligned accesses are plain, with a fence on the ordering side.
+#define ORDERED_OPS(N, T)                                                                          \
+    static inline T rd##N##_acq(uint32_t a) {                                                        \
+        if (a & (sizeof(T) - 1)) { T v = rd##N(a); __atomic_thread_fence(__ATOMIC_ACQUIRE); return v; } \
+        return __atomic_load_n((T *)P(a), __ATOMIC_ACQUIRE);                                        \
+    }                                                                                                \
+    static inline void wr##N##_rel(uint32_t a, T v) {                                                \
+        if (a & (sizeof(T) - 1)) { __atomic_thread_fence(__ATOMIC_RELEASE); wr##N(a, v); return; }   \
+        __atomic_store_n((T *)P(a), v, __ATOMIC_RELEASE);                                           \
+    }
+ORDERED_OPS(8, uint8_t)
+ORDERED_OPS(16, uint16_t)
+ORDERED_OPS(32, uint32_t)
+ORDERED_OPS(64, uint64_t)
+
 static inline int16_t sat16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v; }
 static inline uint8_t usat8(int16_t v) { return v > 255 ? 255 : v < 0 ? 0 : (uint8_t)v; }
 

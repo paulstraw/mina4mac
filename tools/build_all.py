@@ -88,6 +88,7 @@ def main():
     starts_by_mod = {}
     for m in modules:
         prog = Program(m)
+        prog.is_ordered(prog.t_lo)  # run tools/memorder.py's analysis (or load its cache) before the workers
         starts_by_mod[m] = sorted(a for a in prog.all_starts | prog.direct_calls if prog.t_lo <= a < prog.t_hi)
     starts = sorted(a for s in starts_by_mod.values() for a in s)
     assert len(starts) == len(set(starts)), "modules overlap"
@@ -126,7 +127,7 @@ def main():
                     str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/noitamac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
-    print(f"functions {len(starts):,} (stubbed {failed:,})")
+    print(f"functions {len(starts):,} (stubbed {failed:,}); NOITAMAC_TSO={prog.tso_mode}")
     print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 
