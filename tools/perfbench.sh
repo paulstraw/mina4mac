@@ -61,13 +61,15 @@ run)
     log=build/perfbench_$2.log
     CFG="$SAVE/save_shared/config.xml"
     cleanup() { :; }
+    stop() { :; }
     if [ -n "${UNCAPPED:-}" ]; then  # no vsync, no frame limit: frame times show CPU headroom above 60 fps
         v=$(grep -oE ' vsync="[0-9]+"' "$CFG") f=$(grep -oE ' framerate="[0-9]+"' "$CFG")
         sed -i '' -E 's/ vsync="[0-9]+"/ vsync="0"/; s/ framerate="[0-9]+"/ framerate="1000"/' "$CFG"
-        # the game writes its config on exit, so this runs after it has stopped
+        # the game writes its config on exit, so this runs after it has stopped (the EXIT traps call stop first,
+        # or an interrupted run would restore the config and then have the still-running game overwrite it)
         cleanup() { sed -i '' -E "s/ vsync=\"[0-9]+\"/$v/; s/ framerate=\"[0-9]+\"/$f/" "$CFG"; }
     fi
-    trap 'cleanup' EXIT
+    trap 'stop; cleanup' EXIT
     if [ "$2" = noitamac ]; then
         # shellcheck disable=SC2086
         caffeinate -d -u "${NOITAMAC_BIN:-build/noitamac}" "${ARGS[@]}" ${NOITAMAC_ARGS:-} >"$log" 2>&1 &
@@ -78,7 +80,7 @@ run)
         # "Program Flags" set for this run only (restored on exit), and stop it with wineserver -k.
         W="$APP/Contents/SharedSupport/wine"
         plutil -replace "Program Flags" -string "${ARGS[*]}" "$APP/Contents/Info.plist"
-        trap 'plutil -replace "Program Flags" -string "" "$APP/Contents/Info.plist"; cleanup' EXIT
+        trap 'stop; plutil -replace "Program Flags" -string "" "$APP/Contents/Info.plist"; cleanup' EXIT
         open "$APP"
         pid=
         # the game process itself ("C:\GOG Games\Noita\noita.exe ..."), not wine's short-lived helper processes
