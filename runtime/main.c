@@ -6,6 +6,7 @@
 //   MINA4MAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
 //   MINA4MAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
 //   MINA4MAC_JOBLOG=<file>          log the job system (worker jobs, main-thread waits), see joblog.c
+//   MINA4MAC_CPUS, MINA4MAC_QOS, MINA4MAC_YIELD   scheduling knobs, see sched.h
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,7 @@
 #include "msvcr120.h"
 #include "proc.h"
 #include "rt.h"
+#include "sched.h"
 
 enum { EXE_BASE = 0x400000, EXE_ENTRY = 0xdfadb0, EXIT_RET = 0x0badf000 };
 
@@ -36,6 +38,7 @@ int main(int argc, char **argv) {
     const char *counts = getenv("MINA4MAC_COUNT_IMPORTS");
     if (counts && *counts) rt_count_imports(counts);
 
+    sched_init();
     rt_init();
     uint32_t entry = rt_map_pe(path, EXE_BASE);
     if (entry != EXE_ENTRY) {  // the recompiled code is for one specific build of the game

@@ -88,7 +88,10 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
   - Log the job system: how many workers the game creates, the job sizes, and how long each worker is idle vs
     busy per frame. Hook at the job wait loop (0x726a51) and the worker loop.
   - Check which cores the workers run on (`powermetrics` or per-thread CPU time vs wall time).
-- [ ] Try the scheduling fixes. A/B each on its own:
+- [x] Try the scheduling fixes. A/B each on its own:
+  - `runtime/sched.c`: `MINA4MAC_CPUS=all|pcores|<n>`, `MINA4MAC_QOS=default|interactive|initiated`, `MINA4MAC_YIELD=nap<us>|usleep|sched|spin`; results table in PROFILE.md "Scheduling", logs in build/sched/.
+  - Kept: the job wait's `Sleep(0)` naps 20 µs (new default) instead of spinning: heavy work_ms −4.9% (p95 −6.9%), fps +3.7%, main CPU −57%; flood unchanged (−1.2%, swap-bound). E-core job time 13% → 10.4%.
+  - Reverted (knobs stay, off): QoS (user-initiated adds −0.4% on top of nap20), P-cores only (−2%, noise), 7 CPUs (+3.9% worse), `sched_yield` and spin-then-yield (−3.3%, −1.8%). sync.c wake latency is 5 µs median: nothing to fix.
   - Set `QOS_CLASS_USER_INTERACTIVE` (or `USER_INITIATED`) on the main and guest worker threads, so they stay on
     P-cores.
   - Report only the P-core count (`hw.perflevel0.physicalcpu`) from `GetSystemInfo`, so the pool doesn't

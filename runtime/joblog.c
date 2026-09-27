@@ -29,6 +29,7 @@
 
 #include "proc.h"
 #include "rt.h"
+#include "sched.h"
 
 int joblog_on;
 static int FD = -1;
@@ -191,6 +192,6 @@ void joblog_init(uint32_t exe_base) {
     T0 = joblog_now();
     joblog_on = 1;
     int n = hook_jobs(exe_base);
-    emit(local(), "cpus %ld\n", sysconf(_SC_NPROCESSORS_ONLN));
+    emit(local(), "cpus %ld\n", (long)sched_ncpu());
     fprintf(stderr, "[mina4mac] joblog: %s, %d std::function targets hooked\n", path, n);
 }

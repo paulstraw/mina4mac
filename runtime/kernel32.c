@@ -13,6 +13,7 @@
 #include "host.h"
 #include "opengl32.h"
 #include "proc.h"
+#include "sched.h"
 #include "sync.h"
 
 enum { HEAP_ZERO_MEMORY = 0x8, HEAP_REALLOC_IN_PLACE_ONLY = 0x10 };
@@ -236,12 +237,11 @@ HOST_STDCALL(kernel32, DuplicateHandle, 28) {
     ret_i32(c, h != 0);
 }
 
-// SYSTEM_INFO for an x86 (Pentium Pro family) machine with the host's processor count (at most 32, the
-// width of the affinity mask).
+// SYSTEM_INFO for an x86 (Pentium Pro family) machine with sched_ncpu() processors (at most 32, the width of
+// the affinity mask). The game sizes its job pool from this.
 HOST_STDCALL(kernel32, GetSystemInfo, 4) {
     uint32_t si = ARG(0);
-    long n = sysconf(_SC_NPROCESSORS_ONLN);
-    n = n < 1 ? 1 : n > 32 ? 32 : n;
+    uint32_t n = sched_ncpu();
     memset(P(si), 0, 36);
     wr32(si + 4, 0x1000);                                     // dwPageSize
     wr32(si + 8, 0x10000);                                    // lpMinimumApplicationAddress

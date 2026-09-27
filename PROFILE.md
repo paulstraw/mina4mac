@@ -123,3 +123,37 @@ The log hooks every `std::function` call on guest threads (all jobs run through 
 - So the levers are: keep workers off the E-cores (QoS, or a pool of 7 = P-cores − main), stop main's spin from
   taking a P-core, and, most of all, shorten the chunk jobs themselves (Phases 11–12), since the passes' length is
   the per-cell code's speed.
+
+## Scheduling (PLAN3 Phase 9)
+
+Taken 2026-09-27 with `runtime/sched.c`'s env knobs (`MINA4MAC_CPUS`, `MINA4MAC_QOS`, `MINA4MAC_YIELD`) through
+wrapper scripts in `build/sched/`, each run as `tools/perfab.sh <default> <variant> 3` (ABBA-interleaved, medians,
+min–max in parentheses). Logs: `build/sched/{heavy,combo,h2h}.txt`, runs in `build/perfab/`. The baseline drifts
+between batches (heavy 31.8–35.1 fps), so only compare A with B inside one row.
+
+| B (vs the old default: 10 CPUs, no QoS, `usleep(0)`) | scene | fps | work_ms | main cpu_ms |
+|---|---|---|---|---|
+| QoS user-interactive | heavy | +4.1% | −1.0% | −7.2% |
+| QoS user-initiated | heavy | +5.2% | −5.9% | −8.8% |
+| report 8 CPUs (P-cores; pool of 7) | heavy | +0.4% | −2.0% | −1.2% |
+| report 7 CPUs (pool of 6) | heavy | −5.3% | +3.9% | +5.4% |
+| yield: `sched_yield` | heavy | +2.7% | −3.3% | −26% |
+| yield: 64 × `yield` then `sched_yield` | heavy | +2.8% | −1.8% | −23% |
+| yield: `usleep(20)` (nap20) | heavy | +3.7% | **−4.9%** (p95 −6.9%) | −57% |
+| user-initiated + nap10 | heavy | +3.3% | −4.3% | −53% |
+| user-initiated + nap20 | heavy | +3.1% | −2.9% | −55% |
+| user-initiated + nap50 | heavy | +1.1% | −1.1% | −55% |
+| user-initiated + nap20 | flood | −0.7% | −1.2% | −55% |
+| head-to-head, 4 pairs: user-initiated + nap20 vs nap20 alone | heavy | +0.7% | −0.4% | +4.6% |
+
+- **Kept: nap20** (the new default). Main's job wait (`_Thrd_yield` → `Sleep(0)`) now sleeps 20 µs per poll instead
+  of spinning, so it stops holding a core. Heavy: ~5% less work per frame and less than half the main-thread CPU.
+  Flood (swap-bound at 51 fps, lighter passes) is unchanged apart from the CPU. With joblog, the E-cores' share of job
+  time fell from 13% to 10.4%, and passes that end on an E-core from 14% to 10% (`build/joblog/heavy_nap20_report.txt`).
+  A longer nap (50 µs) gives back the gain, because main notices the end of each pass later.
+- **Not kept:** QoS (nothing on top of nap20 in the head-to-head; its solo gain came from a batch with a slow
+  baseline), a smaller pool (P-cores only doesn't help, 7 CPUs is worse: the game gets fewer workers), and the
+  spinning yields (they help only as far as they give the core up, which the nap does better).
+- **Sync HLE:** `runtime/sync.c` and the ConcRT condvars are plain pthread mutexes and condvars with no polling, and
+  joblog measures wake latency at 5 µs median (p95 24–27 µs) against 2–3 ms passes. Nothing to fix there.
+- What remains is the passes' critical path: the chunk jobs themselves (Phases 11–12).

@@ -6,6 +6,7 @@
 
 #include "host.h"
 #include "joblog.h"
+#include "sched.h"
 #include "sync.h"
 
 static Sync *obj(uint32_t this) { return sync_get(rd32(this)); }
@@ -102,7 +103,7 @@ HOST(msvcr120, cv_notify_all, "?notify_all@" CV "QAEXXZ", 0) {
 }
 
 // Scheduler queries and yields.
-static uint32_t ncpu(void) { return (uint32_t)sysconf(_SC_NPROCESSORS_ONLN); }
+static uint32_t ncpu(void) { return sched_ncpu(); }
 HOST(msvcr120, get_concurrency, "?_GetConcurrency@details@Concurrency@@YAIXZ", 0) { ret_i32(c, ncpu()); }
 HOST(msvcr120, num_vprocs, "?GetNumberOfVirtualProcessors@CurrentScheduler@Concurrency@@SAIXZ", 0) {
     ret_i32(c, ncpu());

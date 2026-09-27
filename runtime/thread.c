@@ -11,6 +11,7 @@
 #include "joblog.h"
 #include "kernel32.h"
 #include "proc.h"
+#include "sched.h"
 
 enum { CREATE_SUSPENDED = 0x4, STILL_ACTIVE = 259, WAIT_OBJECT_0 = 0, WAIT_TIMEOUT = 0x102, WAIT_FAILED = 0xffffffffu };
 enum { HOST_STACK = 64 << 20 };  // recompiled code keeps its C frames on the host stack
@@ -48,6 +49,7 @@ static void *thread_main(void *p) {
     Thread *t = &THREADS[n];
     CPU c = {.fpu_cw = 0x27f};
     rt_thread_setup(&c, n);
+    sched_thread_start();
     char name[32];  // shows in sample/Instruments, so profiles can tell guest threads apart (tools/perfprof.sh)
     snprintf(name, sizeof name, "guest %d %08x", n, t->start);
     pthread_setname_np(name);
