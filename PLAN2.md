@@ -232,10 +232,12 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   30-minute session.
   - New `ws2_32.c` (WSAStartup → WSASYSNOTREADY; Socket::open 0x4326d0 gives up), `user32.c` (GetActiveWindow NULL, GetOpenFileNameA cancel); ShellExecuteA → macOS `open` (the Release Notes/modworkshop links, folders); `strftime`, `_getcwd`, `_findfirst64i32` (Lua `ModDoesFileExist`), MultiByteToWideChar, CreateProcessW fails (self-relaunch/ImageMagick). SuspendThread/Get/SetThreadContext/VirtualQuery/OpenProcess/K32GetProcessMemoryInfo are only in the dev profiler (MinHook, 0x80ce80, exits without WIZARD_PROFILER), and `_popen` is ffmpeg recording, so they stay unimplemented. envtest 236; check.sh seed 1144 all ok.
   - Unattended 30-min New Game session: alive at 1800 s, SIGTERM exit 0, no unimplemented imports. The game auto-paused on focus loss somewhere after 10 min. SIGTERM skips NOITAMAC_COUNT_IMPORTS' atexit write.
-- [ ] Packaging.
+- [x] Packaging.
   - Build a `Noita.app` that points to the user's own install.
   - Generated C is derived from the game and must not ship, so the app build runs the
     discover/lift/build pipeline locally against the user's exe (bring-your-own). Document that in the
     README.
+  - `tools/package_app.sh [--no-build] [install]` (NOITA_SRC; out NOITAMAC_APP, default build/Noita.app — ~/Applications/Noita.app is the old Wineskin wrapper, and the script refuses to overwrite apps without its `NoitamacGameDir` plist key): it checks the sha256 of noita.exe/msvcp120.dll, runs discover (if no pkl)/build_all with NOITA_DIR=install, and bundles noitamac + Homebrew SDL2 (+ FMOD dylibs from build/fmod_api) in Frameworks, re-signed ad hoc. The icon comes from the install's goggame-*.ico. `MacOS/Noita` is a bash script: NOITA_DIR = the install (read in place, no copy), NOITAMAC_FMOD=Frameworks, `caffeinate -d -u`, log to ~/Library/Logs/noitamac.log.
+  - Verified: `open build/Noita.app` renders the menu (build/app_menu.png, NSHighResolutionCapable, 1280x752 window at 2x), and vmmap shows the bundled SDL2/FMOD loaded; `codesign --verify --deep --strict` ok; SIGTERM exits. New top-level README.md documents the bring-your-own build.
 - [ ] Manual playtest (needs a person; the loop should skip it): rebind a key in Options (keyboard and
   mouse), and play one 30+ minute session. Record crashes, hangs or anything wrong.
