@@ -1,6 +1,11 @@
 -- mina4mac performance benchmark (tools/perfbench.sh installs and runs it). Pins the world seed, protects the
 -- player, floods the start area with water, oil and lava (fire, steam, lots of moving cells), then records the
 -- real time of every frame and writes "PERFBENCH ..." lines to perfbench.txt in the game directory.
+-- Scene "heavy" (mods/perfbench/scene.txt, written by perfbench.sh) doubles the flood with acid and more water and
+-- oil, drops a grid of physics props (crates, barrels, explosive boxes) into it, adds four more seas every 10 s
+-- and sets off two TNT boxes every 2.5 s (game time).
+-- The start and end of the measured frames are also marked in perfbench_frames.txt, which mina4mac's
+-- MINA4MAC_FRAMELOG appends per-frame CPU times to.
 -- Start it with `-no_logo_splashes -gamemode 0` so no menu clicks are needed; don't touch the controls.
 ModMagicNumbersFileAdd("mods/perfbench/files/magic_numbers.xml")
 
@@ -10,7 +15,15 @@ local file = io and io.open("perfbench.txt", "a")
 local function out(s)
 	if file then file:write("PERFBENCH ", s, "\n") ; file:flush() else print("PERFBENCH " .. s) end
 end
-out("init " .. (file and "file" or "no io"))
+local scene = "flood"
+local sf = io and io.open("mods/perfbench/scene.txt", "r")
+if sf then scene = sf:read("*l") or scene ; sf:close() end
+out("init " .. (file and "file" or "no io") .. " scene " .. scene)
+
+local function mark(s)
+	local f = io and io.open("perfbench_frames.txt", "a")
+	if f then f:write("mark ", s, "\n") ; f:close() end
+end
 
 local LOAD_AT = 60        -- frames after spawn: start the flood
 local WARMUP = 120        -- frames after spawn: start measuring
@@ -49,10 +62,36 @@ function OnWorldPostUpdate()
 		EntityLoad("data/entities/projectiles/deck/sea_water.xml", px - 200, py - 250)
 		EntityLoad("data/entities/projectiles/deck/sea_oil.xml", px + 150, py - 250)
 		EntityLoad("data/entities/projectiles/deck/sea_lava.xml", px + 450, py - 250)
+		if scene == "heavy" then
+			EntityLoad("data/entities/projectiles/deck/sea_acid.xml", px - 450, py - 250)
+			EntityLoad("data/entities/projectiles/deck/sea_water.xml", px + 700, py - 300)
+			EntityLoad("data/entities/projectiles/deck/sea_oil.xml", px - 700, py - 300)
+			local props = { "physics_crate", "physics_barrel_oil", "physics_box_harmless", "physics_box_explosive",
+				"physics_barrel_water", "physics_propane_tank" }
+			for row = 0, 3 do
+				for col = 0, 11 do
+					local name = props[(row * 12 + col) % #props + 1]
+					EntityLoad("data/entities/props/" .. name .. ".xml", px - 550 + col * 100, py - 180 - row * 40)
+				end
+			end
+		end
 		out("load")
-	elseif n >= WARMUP and n <= WARMUP + FRAMES then
+	end
+	if scene == "heavy" and n > LOAD_AT and n <= WARMUP + FRAMES then
+		if (n - LOAD_AT) % 600 == 0 then  -- keep the flood going: more of every sea
+			for i, sea in ipairs({ "water", "oil", "lava", "acid" }) do
+				EntityLoad("data/entities/projectiles/deck/sea_" .. sea .. ".xml", px - 600 + i * 240, py - 300)
+			end
+		end
+		if (n - LOAD_AT) % 150 == 0 then
+			EntityLoad("data/entities/projectiles/deck/tntbox.xml", px - 300, py - 150)
+			EntityLoad("data/entities/projectiles/deck/tntbox.xml", px + 300, py - 150)
+		end
+	end
+	if n >= WARMUP and n <= WARMUP + FRAMES then
+		if n == WARMUP then mark("start") end
 		times[#times + 1] = GameGetRealWorldTimeSinceStarted()
 		if (n - WARMUP) % 300 == 0 then out(string.format("frame +%d at %.3f s", n, times[#times])) end
-		if n == WARMUP + FRAMES then report() ; spawn_frame = nil end
+		if n == WARMUP + FRAMES then mark("end") ; report() ; spawn_frame = nil end
 	end
 end

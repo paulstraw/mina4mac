@@ -2,9 +2,13 @@
 # Performance benchmark, the same scene in mina4mac and in the Wine build: tools/perfbench is a mod that pins
 # WORLD_SEED, floods the start area with water, oil and lava 1 s after spawning, then logs the real time of 1800
 # frames and writes a summary (fps, frame-time percentiles, fps per 300 frames) to <game dir>/perfbench.txt.
-# The game is started with `-no_logo_splashes -gamemode 0`, which skips the menu and starts a new run (this
-# replaces the run in progress in save00). Like tools/determinism.sh, install turns the mod sandbox off (the mod
-# writes a file) and remove turns it back on.
+# SCENE=heavy picks the heavier scene (twice the flood, physics props, TNT); the default is SCENE=flood. For
+# mina4mac the run also reports the main thread's per-frame CPU side from MINA4MAC_FRAMELOG (runtime/sdl2.c):
+# work_ms is the wall time from one swap's return to the next swap (vsync-independent, includes waits for job
+# workers), cpu_ms its thread CPU time, swap_ms the time in the swap; median and p95 over the measured frames.
+# The game is started with `-no_logo_splashes -gamemode 0`, which skips the menu; each run first deletes the run in
+# progress in save00, so every run starts from a fresh world. Like tools/determinism.sh, install turns the mod
+# sandbox off (the mod writes a file) and remove turns it back on.
 #   tools/perfbench.sh install mina4mac|wine     copy + enable the mod (game not running)
 #   tools/perfbench.sh run mina4mac|wine [out]   run the benchmark once, print the summary (and copy it to out);
 #                                                with UNCAPPED=1, vsync is off and the frame limit 1000 for the run
@@ -57,7 +61,11 @@ remove)
 run)
     dirs "${2:-}"
     [ -d "$GAME/mods/perfbench" ] || { echo "run tools/perfbench.sh install $2 first"; exit 1; }
-    rm -f "$GAME/perfbench.txt"
+    rm -f "$GAME/perfbench.txt" "$GAME/perfbench_frames.txt"
+    # -gamemode 0 keeps the saved world (the flood, holes from earlier runs) and the player's position, so every
+    # run would start where the last one ended and get slower; drop the run in progress for a fresh world
+    rm -rf "$SAVE/save00/world" "$SAVE/save00/player.xml" "$SAVE/save00/world_state.xml"
+    echo "${SCENE:-flood}" >"$GAME/mods/perfbench/scene.txt"
     log=build/perfbench_$2.log
     CFG="$SAVE/save_shared/config.xml"
     cleanup() { :; }
@@ -72,9 +80,9 @@ run)
     trap 'stop; cleanup' EXIT
     if [ "$2" = mina4mac ]; then
         # shellcheck disable=SC2086
-        caffeinate -d -u "${MINA4MAC_BIN:-build/mina4mac}" "${ARGS[@]}" ${MINA4MAC_ARGS:-} >"$log" 2>&1 &
+        MINA4MAC_FRAMELOG="$PWD/$GAME/perfbench_frames.txt" caffeinate -d -u "${MINA4MAC_BIN:-build/mina4mac}" "${ARGS[@]}" ${MINA4MAC_ARGS:-} >"$log" 2>&1 &
         pid=$!
-        stop() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true; }
+        stop() { kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true; }
     else
         # Direct `wine noita.exe` fails here (wineboot won't start), so launch through the wrapper with its
         # "Program Flags" set for this run only (restored on exit), and stop it with wineserver -k.
@@ -99,8 +107,16 @@ run)
     done
     stop
     [ -f "$GAME/perfbench.txt" ] || { echo "no perfbench.txt (log: $log)"; exit 1; }
+    if [ -f "$GAME/perfbench_frames.txt" ]; then  # the frames between the mod's start and end marks
+        stat() {  # stat <column> <name>: median and p95 of that column
+            awk '/^mark start/{on=1;next} /^mark end/{on=0} on&&/^f /{print $'"$1"'}' "$GAME/perfbench_frames.txt" |
+                sort -n | awk -v n="$2" '{v[NR]=$1} END{if(NR) printf "PERFBENCH %s median %.2f p95 %.2f frames %d\n",
+                    n, v[int((NR+1)/2)], v[int(NR*0.95+0.999)], NR}'
+        }
+        { stat 2 work_ms; stat 3 cpu_ms; stat 4 swap_ms; } >>"$GAME/perfbench.txt"
+    fi
     tr -d '\r' <"$GAME/perfbench.txt" | sed 's/^PERFBENCH //'
     [ -z "${3:-}" ] || tr -d '\r' <"$GAME/perfbench.txt" >"$3"
     grep -q "PERFBENCH done" "$GAME/perfbench.txt" || { echo "(incomplete; log: $log)"; exit 1; } ;;
-*) sed -n '2,12p' "$0"; exit 2 ;;
+*) sed -n '2,19p' "$0"; exit 2 ;;
 esac

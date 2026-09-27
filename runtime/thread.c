@@ -47,6 +47,9 @@ static void *thread_main(void *p) {
     Thread *t = &THREADS[n];
     CPU c = {.fpu_cw = 0x27f};
     rt_thread_setup(&c, n);
+    char name[32];  // shows in sample/Instruments, so profiles can tell guest threads apart (tools/perfprof.sh)
+    snprintf(name, sizeof name, "guest %d %08x", n, t->start);
+    pthread_setname_np(name);
     pthread_mutex_lock(&t->m);
     while (t->suspend) pthread_cond_wait(&t->cv, &t->m);
     pthread_mutex_unlock(&t->m);

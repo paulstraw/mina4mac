@@ -58,7 +58,9 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
 
 ### Phase 8: a trustworthy benchmark
 
-- [ ] Make perfbench measure CPU work, not just fps.
+- [x] Make perfbench measure CPU work, not just fps.
+  - `MINA4MAC_FRAMELOG` (sdl2.c) + mod marks → work_ms/cpu_ms/swap_ms in perfbench output; `SCENE=heavy`; `tools/perfab.sh A B [n]`. The old ±7% noise was mostly runs continuing the previous run's world; `run` now deletes save00's world/player/world_state.
+  - Same binary, 6 runs: flood work 14.82–15.00 ms (51 fps, swap ~5 ms, so frames miss vsync), heavy 22.94–23.56 ms (35 fps). Results in build/perfab/.
   - At 60 Hz capped, fps saturates, and uncapped still includes GL and swap time. Add a per-frame CPU-time metric
     (main-thread time from frame start to before `SDL_GL_SwapWindow`, via the hand-written SwapWindow in
     `runtime/sdl2.c`) and report its median and p95 alongside fps.
@@ -67,7 +69,9 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
   - Add `tools/perfab.sh A B [n]`: build or take two binaries and run n interleaved pairs, then print the medians
     and the spread. A/B must be one command.
   - Check that the numbers are stable: 5 runs of the same binary should land within a few percent on CPU time.
-- [ ] A repeatable profile.
+- [x] A repeatable profile.
+  - `tools/perfprof.sh` (sample every 5 ms during perfbench; 1 ms slows the game ~25%) → `tools/perfprof.py` buckets/threads/waits/top fns; `tools/fninfo.py <addr>` names functions (RTTI vtables, callers). Guest threads are now named `guest N <start>`. Baseline + top 20 in PROFILE.md.
+  - Findings: only 9 of 18 guest threads work (34–49% busy); main thread spends 41–50% in Sleep(0) from `_Thrd_yield`; dispatch is 12–13% of busy time, mostly vcalls to tiny cell getters in the cell sim (≈60% of work in its top 20).
   - Script `sample` (or `xctrace` with Time Profiler) over the benchmark's steady-state window. Aggregate by
     `F_<addr>` and by runtime symbol, per thread (main, the 8 workers, the FMOD thread).
   - Group the costs into buckets: lifted guest code, `guest_call`/dispatch, x87 helpers, HLE (msvcr/kernel32/sync),

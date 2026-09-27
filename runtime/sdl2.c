@@ -2,11 +2,14 @@
 // that don't fit tools/gen_sdl.py's generated thunks (SDL_PollEvent, SDL_FreeSurface).
 #include "sdl2.h"
 
+#include <fcntl.h>
 #include <os/lock.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "heap.h"
 #include "hle.h"
@@ -336,8 +339,35 @@ static void count_frame(SDL_Window *w) {
     t0 = now, frames = 0, worst = 0;
 }
 
+// MINA4MAC_FRAMELOG=<file> appends one line per frame, "f <work ms> <cpu ms> <swap ms>": work is the main thread's
+// wall time from the previous swap's return to this swap (the frame's CPU side, including waits for job workers,
+// excluding swap and vsync), cpu its thread CPU time over the same span, swap the time inside SDL_GL_SwapWindow.
+// O_APPEND, one write per line, so other writers of the file (perfbench's start/end marks) interleave in order.
+static double now_ms(clockid_t id) {
+    struct timespec ts;
+    clock_gettime(id, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
 HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *window)
+    static int fd = -2;
+    static double wall0, cpu0;
+    if (fd == -2) {
+        const char *path = getenv("MINA4MAC_FRAMELOG");
+        fd = path && *path ? open(path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
+    }
+    double wall = 0, cpu = 0;
+    if (fd >= 0) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
     SDL_Window *w = sdl_host(ARG(0));
     SDL_GL_SwapWindow(w);
     count_frame(w);
+    if (fd >= 0) {
+        double after = now_ms(CLOCK_MONOTONIC_RAW);
+        if (wall0) {
+            char line[64];
+            int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
+            if (write(fd, line, n) < 0) close(fd), fd = -1;
+        }
+        wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    }
 }
