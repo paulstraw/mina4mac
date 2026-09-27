@@ -239,5 +239,10 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     README.
   - `tools/package_app.sh [--no-build] [install]` (NOITA_SRC; out MINA4MAC_APP, default build/Noita.app — ~/Applications/Noita.app is the old Wineskin wrapper, and the script refuses to overwrite apps without its `Mina4macGameDir` plist key): it checks the sha256 of noita.exe/msvcp120.dll, runs discover (if no pkl)/build_all with NOITA_DIR=install, and bundles mina4mac + Homebrew SDL2 (+ FMOD dylibs from build/fmod_api) in Frameworks, re-signed ad hoc. The icon comes from the install's goggame-*.ico. `MacOS/Noita` is a bash script: NOITA_DIR = the install (read in place, no copy), MINA4MAC_FMOD=Frameworks, `caffeinate -d -u`, log to ~/Library/Logs/mina4mac.log.
   - Verified: `open build/Noita.app` renders the menu (build/app_menu.png, NSHighResolutionCapable, 1280x752 window at 2x), and vmmap shows the bundled SDL2/FMOD loaded; `codesign --verify --deep --strict` ok; SIGTERM exits. New top-level README.md documents the bring-your-own build.
-- [ ] Manual playtest (needs a person; the loop should skip it): rebind a key in Options (keyboard and
+- [x] Manual playtest (needs a person; the loop should skip it): rebind a key in Options (keyboard and
   mouse), and play one 30+ minute session. Record crashes, hangs or anything wrong.
+  - 2026-09-27, user playtest of the packaged `build/Noita.app` (bundled SDL2 + FMOD 2.01.23): audio is great,
+    rebinding works, focus loss auto-pauses and resumes, and Save & Quit → Continue works (tested several times
+    across sessions). No crashes or hangs. The user has never seen the SwapWindow stalls: they seem specific to
+    the agent's unattended/scripted launches, not normal play. The log's only error is the expected
+    `FindFirstChangeNotification function failed 50` (the dev hot-reload watcher; unsupported by design).
