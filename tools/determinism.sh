@@ -6,8 +6,8 @@
 # (mods_sandbox_enabled="0") and remove turns it back on.
 #   tools/determinism.sh install <game dir> <Nolla_Games_Noita save dir>    copy + enable the mod (game not running)
 #   tools/determinism.sh remove  <game dir> <Nolla_Games_Noita save dir>    disable + delete it again
-#   tools/determinism.sh diff [a b]      compare two seedprint.txt files (default: noitamac's and the Wine build's)
-# Defaults: noitamac is build/game with ~/Library/Application Support/noitamac/.../Nolla_Games_Noita; the Wine build
+#   tools/determinism.sh diff [a b]      compare two seedprint.txt files (default: mina4mac's and the Wine build's)
+# Defaults: mina4mac is build/game with ~/Library/Application Support/mina4mac/.../Nolla_Games_Noita; the Wine build
 # (tools/determinism.sh install wine) is the Sikarugir wrapper's GOG install and save.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -15,7 +15,7 @@ cd "$(dirname "$0")/.."
 WINE_PREFIX="$HOME/Applications/Noita Sikarugir.app/Contents/SharedSupport/prefix/drive_c"
 dirs() {  # dirs <name|game dir> [save dir]
     case "$1" in
-    noitamac) GAME=build/game SAVE="$HOME/Library/Application Support/noitamac/AppData/LocalLow/Nolla_Games_Noita" ;;
+    mina4mac) GAME=build/game SAVE="$HOME/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita" ;;
     wine) GAME="$WINE_PREFIX/GOG Games/Noita" SAVE="$WINE_PREFIX/users/Sikarugir/AppData/LocalLow/Nolla_Games_Noita" ;;
     *) GAME=$1 SAVE=$2 ;;
     esac
@@ -49,7 +49,7 @@ remove)
     rm -rf "$GAME/mods/seedprint"
     echo "removed seedprint from $GAME" ;;
 diff)
-    dirs noitamac; A=${2:-$GAME/seedprint.txt}
+    dirs mina4mac; A=${2:-$GAME/seedprint.txt}
     dirs wine; B=${3:-$GAME/seedprint.txt}
     a=$(mktemp) b=$(mktemp)
     sed $'s/\r$//; s/^SEEDPRINT //' "$A" >"$a"

@@ -280,10 +280,10 @@ HOST_CDECL(lua51, lua_pushcclosure) {
     lua_insert(L, -n - 1);
     lua_pushcclosure(L, trampoline, n + 1);
 }
-// NOITAMAC_TRACE_LUA=1 logs every chunk the guest loads and every error lua_pcall returns.
+// MINA4MAC_TRACE_LUA=1 logs every chunk the guest loads and every error lua_pcall returns.
 static int trace_lua(void) {
     static int t = -1;
-    if (t < 0) t = getenv("NOITAMAC_TRACE_LUA") && *getenv("NOITAMAC_TRACE_LUA") != '0';
+    if (t < 0) t = getenv("MINA4MAC_TRACE_LUA") && *getenv("MINA4MAC_TRACE_LUA") != '0';
     return t;
 }
 static int traced_load(lua_State *L, int r, const char *name, size_t size) {

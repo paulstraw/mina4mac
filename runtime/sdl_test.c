@@ -102,7 +102,7 @@ int main(void) {
     SDL_Surface *h = SDL_CreateRGBSurface(0, 5, 3, 24, 0xff0000, 0xff00, 0xff, 0);
     ((uint8_t *)h->pixels)[h->pitch * 2 + 3 * 4] = 0x5a;
     char dir[4096];
-    snprintf(dir, sizeof dir, "/tmp/noitamac_sdltest_%d", getpid());
+    snprintf(dir, sizeof dir, "/tmp/mina4mac_sdltest_%d", getpid());
     mkdir(dir, 0755);
     char bmp[4200];
     snprintf(bmp, sizeof bmp, "%s/icon.bmp", dir);

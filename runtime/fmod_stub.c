@@ -1,4 +1,4 @@
-// The silent FMOD backend (NOITAMAC_AUDIO=stub, or when the macOS FMOD dylibs aren't installed): a stand-in
+// The silent FMOD backend (MINA4MAC_AUDIO=stub, or when the macOS FMOD dylibs aren't installed): a stand-in
 // for the part of the FMOD C API the bridge (fmod.c) calls. Every call succeeds and nothing plays; the only
 // data is what the game reads back:
 //   - Objects are host allocations. The system, core system and master channel group are made once per

@@ -1,6 +1,6 @@
 """Lift every function of the given modules (default: noita and msvcp120, which the launcher needs) into chunked C files, compile them in
 parallel, link the test harness (build/harness_all), the microbenchmark (build/bench <image.bin>) and the
-launcher (build/noitamac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2, the OpenGL
+launcher (build/mina4mac, which also links the SDL2 bridge from tools/gen_sdl.py and the host's SDL2, the OpenGL
 bridge from tools/gen_gl.py, and the LuaJIT bridge with LuaJIT built from third_party/luajit into build/luajit/).
 
 Per-module chunks go in build/<module>/gen/; the combined decls.h, FN_TABLE and runtime objects go in
@@ -124,10 +124,10 @@ def main():
     subprocess.run(["clang", *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
     subprocess.run(["clang", *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
     subprocess.run(["clang", *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
-                    str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/noitamac")], check=True)
+                    str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/mina4mac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
-    print(f"functions {len(starts):,} (stubbed {failed:,}); NOITAMAC_TSO={prog.tso_mode}")
+    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}")
     print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 

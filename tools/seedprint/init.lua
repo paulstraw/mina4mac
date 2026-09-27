@@ -1,4 +1,4 @@
--- noitamac determinism check (tools/determinism.sh installs it). Pins the world seed and prints a fingerprint
+-- mina4mac determinism check (tools/determinism.sh installs it). Pins the world seed and prints a fingerprint
 -- of the start area, as "SEEDPRINT ..." lines, at fixed frames after the player spawns. Diff the lines from
 -- two builds (tools/determinism.sh diff). Don't touch the controls until the "SEEDPRINT done" line (~10 s).
 ModMagicNumbersFileAdd("mods/seedprint/files/magic_numbers.xml")

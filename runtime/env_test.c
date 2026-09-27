@@ -337,7 +337,7 @@ static int gwstreq(uint32_t w, const char *s) {
 // system info, virtual memory, threads, RTTI casts, the offline Galaxy stub and GL without a context.
 static void sdl_main_imports(CPU *cp) {
     CPU c = *cp;
-    char tmp[] = "/tmp/noitamac_envtest.XXXXXX", p[4096], w[4096];
+    char tmp[] = "/tmp/mina4mac_envtest.XXXXXX", p[4096], w[4096];
     CHECK("mkdtemp", mkdtemp(tmp) != NULL, 1);
     setenv("HOME", tmp, 1);  // known folders live under $HOME
 
@@ -347,7 +347,7 @@ static void sdl_main_imports(CPU *cp) {
     uint32_t guid = heap_alloc(16), out = heap_alloc(4);
     memcpy(P(guid), LOCAL_LOW, 16);
     uint32_t hr = (call(&c, "SHELL32.dll", "SHGetKnownFolderPath", 4, (uint32_t[]){guid, 0x8000, 0, out}), c.eax);
-    snprintf(p, sizeof p, "%s/Library/Application Support/noitamac/AppData/LocalLow", tmp);
+    snprintf(p, sizeof p, "%s/Library/Application Support/mina4mac/AppData/LocalLow", tmp);
     win_path(p, w, sizeof w);
     struct stat st;
     CHECK("SHGetKnownFolderPath LocalLow", hr == 0 && gwstreq(rd32(out), w) && !stat(p, &st) && S_ISDIR(st.st_mode), 1);
@@ -496,7 +496,7 @@ static void sdl_main_imports(CPU *cp) {
     // Galaxy offline, GL with no context current (a no-op, still popping its stdcall args).
     CHECK("Galaxy User() = NULL", (call(&c, "Galaxy.dll", "?User@api@galaxy@@YAPAVIUser@12@XZ", 0, NULL), c.eax), 0);
     // FMOD bridge over the silent stub backend: handles, user data, version, empty banks, per-path descriptions.
-    setenv("NOITAMAC_AUDIO", "stub", 1);
+    setenv("MINA4MAC_AUDIO", "stub", 1);
 #define FS(name, ...) (call(&c, "fmodstudio.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
     uint32_t fo = heap_calloc(4, 4), fsys, fev, fev2, finst, fbuf = heap_alloc(64);
     CHECK("FMOD create", FS("?create@System@Studio@FMOD@@SG?AW4FMOD_RESULT@@PAPAV123@I@Z", fo, 0x20105), 0);
@@ -680,7 +680,7 @@ int main(int argc, char **argv) {
     CHECK("HeapFree", K32("HeapFree", PROCESS_HEAP, 0, h2) == 1 && !heap_owns(h2), 1);
 
     // CRT startup.
-    crt_init(3, (char *[]){"noitamac", "-x", "a b", NULL});
+    crt_init(3, (char *[]){"mina4mac", "-x", "a b", NULL});
     uint32_t pargc = heap_alloc(12), pargv = pargc + 4, penv = pargc + 8;
     CHECK("__getmainargs", CRT("__getmainargs", pargc, pargv, penv, 0, 0), 0);
     uint32_t av = rd32(pargv);

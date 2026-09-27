@@ -1,4 +1,4 @@
-# noitamac, part 2: from first window to a playable game
+# mina4mac, part 2: from first window to a playable game
 
 This continues `PLAN.md`, which is complete: the recompiled game runs through startup to a black window
 with a GL context. **Read the Context section of `PLAN.md` first.** Its goal, legal and repository rules,
@@ -74,7 +74,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   Then fix the file-API gaps until the logger stops reporting missing `data/ui_gfx` and translations.
   - Record in the note which files the game opens (including how it reads `data.wak`) and any path
     translation issues (`Z:\`, case sensitivity, `/` vs `\`).
-  - `tools/setup_game.sh [src]` (`NOITA_SRC`/`NOITA_DIR`) rsyncs data/, mods/, config.xml and the _branch/_version/_release_notes/screenshot_paths files; refuses an un-ignored destination in the repo. No file-API gaps: logger is clean. Opens (`NOITAMAC_TRACE_FILES=1`): `data/data.wak` twice (via msvcp `_wfsopen`; all of `data/…` incl. ui_gfx/translations comes from it, read whole through an inlined `basic_filebuf` = 42.5M `fgetc` calls, ~1 s, since our FILE has no guest buffer), `data/icon.bmp`, config.xml, `mods\*` (FindFirstFileW) + each mod's mod.xml/compatibility.xml/settings.lua, LocalLow save_shared/config.xml and save00/mod_*. Paths are relative with `/` or absolute `Z:\…` with `\`; APFS is case-insensitive, so no case issues.
+  - `tools/setup_game.sh [src]` (`NOITA_SRC`/`NOITA_DIR`) rsyncs data/, mods/, config.xml and the _branch/_version/_release_notes/screenshot_paths files; refuses an un-ignored destination in the repo. No file-API gaps: logger is clean. Opens (`MINA4MAC_TRACE_FILES=1`): `data/data.wak` twice (via msvcp `_wfsopen`; all of `data/…` incl. ui_gfx/translations comes from it, read whole through an inlined `basic_filebuf` = 42.5M `fgetc` calls, ~1 s, since our FILE has no guest buffer), `data/icon.bmp`, config.xml, `mods\*` (FindFirstFileW) + each mod's mod.xml/compatibility.xml/settings.lua, LocalLow save_shared/config.xml and save00/mod_*. Paths are relative with `/` or absolute `Z:\…` with `\`; APFS is case-insensitive, so no case issues.
   - Also fixed on the way: x87 lifter bugs only msvcp120 hits (`fxch st(i)` was a no-op; one-operand `fadd/fmul/fdiv st(i)` wrote st(i), not st(0)) → stack-cookie failure in float parsing; new `insntest.py --x87reg` (x87regtest in check.sh). opengl32.c forwards glGen/Delete/BindTexture, glTexParameteri, glTex(Sub)Image2D. check.sh seed 1357 all ok; launcher again stops at `fmodstudio!FMOD::Studio::System::create` from 0x47a6fb.
 - [x] FMOD silent stub (`runtime/fmod_stub.c`). Implement all 42 imports with `HOST(...)` and the
   mangled names.
@@ -82,7 +82,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Every function returns `FMOD_OK`, and callbacks never fire.
   - `getEventCount` and `getEventList` return real-looking empty data, or whatever the game needs to
     carry on. Read the call sites to decide.
-  - Keep the stub selectable later with `NOITAMAC_AUDIO=stub` once real audio exists.
+  - Keep the stub selectable later with `MINA4MAC_AUDIO=stub` once real audio exists.
   - Record where startup stops next.
   - Handles are 16-byte {magic, kind, userdata, name}; banks/buses/descriptions are one per path. getVersion must report ≥0x20105 (checked at 0x47a738). Banks have 0 events, so getEventList is skipped. getUserProperty returns 74 (EVENT_NOTFOUND), which the game treats as "absent"; getEvent also accepts 74 but returns OK. Startup: create/initialize, 2 banks, 7 buses, update. envtest 195 checks; check.sh seed 22320 all ok.
   - Next stop: `opengl32!glCreateShader` from 0xdd64f1, before any `lua51` call. The next task needs GL shader stand-ins (or the Phase 6 bridge) first.
@@ -94,7 +94,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Does anything read LuaJIT object internals directly (for example `L->top`) instead of going through
     the API?
   - Record the answers in the note. Do not implement Lua yet.
-  - No Lua before the menu, which now renders fully (opengl32.c forwards ~80 GL 2.1 calls: shaders, buffers, client/attrib arrays with buffer-offset handling, ARB FBOs; plus timeBeginPeriod, FileTimeToSystemTime/SystemTimeToTzSpecificLocalTime/GetLocalTime, null exception_ptr, mbstowcs_s, __crtSleep, offline wininet.c, failing FindFirstChangeNotificationW). New `NOITAMAC_CLICKS="t:x,y;…"` (sdl2.c; CGEvent posting is blocked without Accessibility) clicks New Game + first mode; check.sh uses it and stops at `luaL_newstate` from 0x7ed89e on a job-system worker thread (tid 0x130, via 0x849bc0 → 0x6afaa0 → 0x832dc0 → 0x7ed620). check.sh seed 31337 all ok, envtest 212.
+  - No Lua before the menu, which now renders fully (opengl32.c forwards ~80 GL 2.1 calls: shaders, buffers, client/attrib arrays with buffer-offset handling, ARB FBOs; plus timeBeginPeriod, FileTimeToSystemTime/SystemTimeToTzSpecificLocalTime/GetLocalTime, null exception_ptr, mbstowcs_s, __crtSleep, offline wininet.c, failing FindFirstChangeNotificationW). New `MINA4MAC_CLICKS="t:x,y;…"` (sdl2.c; CGEvent posting is blocked without Accessibility) clicks New Game + first mode; check.sh uses it and stops at `luaL_newstate` from 0x7ed89e on a job-system worker thread (tid 0x130, via 0x849bc0 → 0x6afaa0 → 0x832dc0 → 0x7ed620). check.sh seed 31337 all ok, envtest 212.
   - `uv run tools/luasurvey.py` has the details. 50 imports are called; 121 (+ luaL_openlibs) are only stored into the sandbox list of 0x7ee720(cl=patch): per function VirtualProtect(16) and write `C7 05 00000000 00000000` (mov [0],0), originals saved once in a VirtualAlloc buffer and restored with cl=0 (callers 0x836e70/0x6daf60 patch, 0x9a0980 restores). All states come from 0x7ed880 (1 luaL_newstate site, called via 0x7ed620 from 15 places: created and lua_closed dynamically, likely per LuaComponent), on worker threads, so the bridge needs per-thread CPUs. It runs luaL_openlibs if [this+0x4e] (unsafe mods), else pushes the *thunks* of luaopen_base/table/string/math/bit/jit via lua_pushcclosure + lua_call (the bridge must map lua51 thunks to host functions), nils load/loadfile/loadstring/gcinfo/collectgarbage and defines dofile/dofile_once in Lua. st0: lua_tonumber (356 sites); lua_pushnumber takes a double arg. lua_Debug (32-bit, 100 bytes; name/what/source are pointers, which must point into guest memory) is used by the exe's own luaL_traceback copy 0x7ec490 (reads currentline +20, short_src +36) and 0x7ec2a0/0x7ec350. All 109 pushcclosure calls use 0 upvalues; the only pseudo-indices are GLOBALSINDEX and REGISTRYINDEX; no lua_error/luaL_error/userdata imports; lua_topointer (41 sites) and lua_tolstring pointers must be guest addresses. No lua_State field reads were found in the 401 registered C functions.
 
 ### Phase 5: LuaJIT
@@ -129,7 +129,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - luatest (check.sh): 48 checks, JIT loop 1.7 ns/iter with traces, 36 ns per Lua→guest call. check.sh seed 27182 all ok. Launcher: 4 states, 20 chunks loaded, 13 lua_pcalls, then stops at `MSVCR120!??_V@YAXPAX@Z` (delete[]) from 0x8b0858.
 - [x] Run until the game's Lua init finishes (built-in scripts and mod loading with the default mods).
   Record which scripts ran, any API gaps, and where execution stops.
-  - Lua init completes; nothing stops. It was unblocked by 1aa439e (delete[], _setjmp3, GetSystemTime, ConcRT id, glPush/PopAttrib) and 4093f73 (lua_tointeger), and runs in-game (Holy Mountain at 90 s). Traced New Game run (`NOITAMAC_TRACE_LUA=1`, check.sh clicks, default mods, all disabled so no mod scripts; log `build/luainit.log`): about 160 states, 1182 chunk loads, 0 pcall errors, no unimplemented imports. First is `data/scripts/init.lua` (utilities, biome_modifiers), then per-state `data/scripts/biomes/*` (191), director_helpers (145), item_spawnlists/biome_scripts (122 each), lib (89), gun (84), perks, items, game_helpers, static_tile, streaming_integration, status_effects.
+  - Lua init completes; nothing stops. It was unblocked by 1aa439e (delete[], _setjmp3, GetSystemTime, ConcRT id, glPush/PopAttrib) and 4093f73 (lua_tointeger), and runs in-game (Holy Mountain at 90 s). Traced New Game run (`MINA4MAC_TRACE_LUA=1`, check.sh clicks, default mods, all disabled so no mod scripts; log `build/luainit.log`): about 160 states, 1182 chunk loads, 0 pcall errors, no unimplemented imports. First is `data/scripts/init.lua` (utilities, biome_modifiers), then per-state `data/scripts/biomes/*` (191), director_helpers (145), item_spawnlists/biome_scripts (122 each), lib (89), gun (84), perks, items, game_helpers, static_tile, streaming_integration, status_effects.
 
 ### Phase 6: OpenGL
 
@@ -139,7 +139,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Extract the shaders from `data.wak` (document the wak format in the note) and record their GLSL
     `#version`s and any fixed-function use.
   - Decide between the legacy 2.1 and the core 4.1 context. Record the list of names that macOS lacks.
-  - **Legacy 2.1.** `NOITAMAC_COUNT_IMPORTS=<file>` (new, rt.c) writes calls per thunk at exit; `uv run tools/glsurvey.py [file]` extracts shaders to `build/shaders/` and checks names against the SDK headers (gl.h+glext.h vs gl3.h+gl3ext.h). data.wak: header {0, count, table end, 0}, then per file {u32 offset, u32 size, u32 namelen, name}, then uncompressed data. All 23 shaders are `#version 110` (plus the included common.frag) and use gl_TexCoord/gl_FragColor/texture2D/gl_Color/gl_ModelViewMatrix/gl_MultiTexCoord; no GLSL in the exe. In a 150 s menu → New Game run, 50 of 1048 opengl32 thunks were called (+4 wgl*). Legacy lacks none of them, but core lacks 12 (client arrays, matrix stack, Push/PopAttrib, Ortho, Scalef). 461 looked-up names aren't in the legacy headers (mostly 3.x/4.x and DSA; see build/glsurvey.log). Options and fullscreen weren't exercised.
+  - **Legacy 2.1.** `MINA4MAC_COUNT_IMPORTS=<file>` (new, rt.c) writes calls per thunk at exit; `uv run tools/glsurvey.py [file]` extracts shaders to `build/shaders/` and checks names against the SDK headers (gl.h+glext.h vs gl3.h+gl3ext.h). data.wak: header {0, count, table end, 0}, then per file {u32 offset, u32 size, u32 namelen, name}, then uncompressed data. All 23 shaders are `#version 110` (plus the included common.frag) and use gl_TexCoord/gl_FragColor/texture2D/gl_Color/gl_ModelViewMatrix/gl_MultiTexCoord; no GLSL in the exe. In a 150 s menu → New Game run, 50 of 1048 opengl32 thunks were called (+4 wgl*). Legacy lacks none of them, but core lacks 12 (client arrays, matrix stack, Push/PopAttrib, Ortho, Scalef). 461 looked-up names aren't in the legacy headers (mostly 3.x/4.x and DSA; see build/glsurvey.log). Options and fullscreen weren't exercised.
 - [x] Generate the GL bridge (`tools/gen_gl.py` from `gl.xml`, output under `build/gen_all/`) for the
   names the survey found, all `__stdcall`.
   - Pointer arguments are guest pointers (`MEM + p`). But `gl*Pointer`, `glDrawElements` indices and
@@ -175,19 +175,19 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     right away (0xdd7647/0xdd7654/0xdd7747). A macOS fullscreen Space leaves asynchronously and then restores its
     own frame (2560x1322). sdl2.c now sets `SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES=0` (default priority), so
     fullscreen is a synchronous borderless window, as on Windows. Confirmed in a user playtest (both directions,
-    including "Yes" to keep the settings). Diagnose such issues with `NOITAMAC_TRACE=SDL_SetWindow,SDL_WINDOWEVENT,glViewport`
-    (NOITAMAC_TRACE now takes comma-separated name filters; SDL_WINDOWEVENT logs events with window/drawable sizes).
+    including "Yes" to keep the settings). Diagnose such issues with `MINA4MAC_TRACE=SDL_SetWindow,SDL_WINDOWEVENT,glViewport`
+    (MINA4MAC_TRACE now takes comma-separated name filters; SDL_WINDOWEVENT logs events with window/drawable sizes).
     Scripted clicks now hover 100 ms before pressing (dialog buttons ignored un-hovered presses). New Game with a
-    run in progress: `NOITAMAC_CLICKS="20:639,370;24:445,250;28:607,362"` (New Game, first mode, Yes).
+    run in progress: `MINA4MAC_CLICKS="20:639,370;24:445,250;28:607,362"` (New Game, first mode, Yes).
   - **Determinism: matches Wine.** `tools/determinism.sh` installs `tools/seedprint` (WORLD_SEED=123456789; writes
     `seedprint.txt` with io, because release builds drop print() output even on Windows, so it needs the mod sandbox
     off, which install/remove toggle). The seed, ProceduralRandomf/Randomf, and the 512x512 cell grid plus all
-    entities at spawn+60 and +600 frames are identical across one Wine and two noitamac runs. Spawn+1 differs
-    even between noitamac runs (chunk streaming timing). Lua libm: 2 of 25 values differ in the last bit
+    entities at spawn+60 and +600 frames are identical across one Wine and two mina4mac runs. Spawn+1 differs
+    even between mina4mac runs (chunk streaming timing). Lua libm: 2 of 25 values differ in the last bit
     (sin(-2.5), exp(25.175)): the game's LuaJIT 2.0 uses x87 fsin/exp, ours uses the macOS libm. No visible effect.
-    For a manual session: `caffeinate -u build/noitamac` (add `NOITAMAC_TRACE_LUA=1` for Lua loads and
+    For a manual session: `caffeinate -u build/mina4mac` (add `MINA4MAC_TRACE_LUA=1` for Lua loads and
     pcall errors; `longjmp` still exits 11, a sandboxed lib exits 10). Saves live under
-    `~/Library/Application Support/noitamac/AppData/LocalLow/Nolla_Games_Noita/` (the loop enabled the
+    `~/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita/` (the loop enabled the
     `example` and `starting_loadouts` mods in save00/mod_config.xml and accepted the mod disclaimers in
     save_shared/config.xml).
   - Menu input (mouse and keyboard through SDL events).
@@ -211,7 +211,7 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
     decide where fences are needed, and add a lifter option such as emitting acquire/release for
     identified addresses or functions.
   - Add a stress test if feasible.
-  - `tools/memorder.py` (run by lift/build_all, cached in build/<m>/memorder.pkl) marks: all of the 80 functions with locked ops (spinlocks, atomic<bool> xchg stores, shared_ptr/job counts), loops calling a yield import (153 fns, e.g. the job wait `while (job[+0x1c] > 0) _Thrd_yield()` at 0x726a51), pure spin loops (1: 0x84aba0, which plain clang compiled to `b .`, a latent hang), and accesses to globals used by locked ops. That's 20k noita + 2.2k msvcp120 insns, lifted with `rd*_acq`/`wr*_rel` (cpu.h; LDAPR/STLR = TSO's reorderings; esp/ebp-based, x87/SSE and string ops stay plain). `NOITAMAC_TSO=auto|all|off` picks it. The rest of the sync is mutexes, condition variables and ConcRT, which the HLE already orders.
+  - `tools/memorder.py` (run by lift/build_all, cached in build/<m>/memorder.pkl) marks: all of the 80 functions with locked ops (spinlocks, atomic<bool> xchg stores, shared_ptr/job counts), loops calling a yield import (153 fns, e.g. the job wait `while (job[+0x1c] > 0) _Thrd_yield()` at 0x726a51), pure spin loops (1: 0x84aba0, which plain clang compiled to `b .`, a latent hang), and accesses to globals used by locked ops. That's 20k noita + 2.2k msvcp120 insns, lifted with `rd*_acq`/`wr*_rel` (cpu.h; LDAPR/STLR = TSO's reorderings; esp/ebp-based, x87/SSE and string ops stay plain). `MINA4MAC_TSO=auto|all|off` picks it. The rest of the sync is mutexes, condition variables and ConcRT, which the HLE already orders.
   - atomictest now also runs real game insns ordered vs plain: ordered unlock/MP/spin are exact; plain `mov` unlock loses ~1000 of 1.6M updates, and the plain spin hangs. check.sh seed 8013 all ok. Perfbench uncapped, auto vs off: median ~43.5 vs 45.2 fps (within the ±7% noise; no hot function is ordered). Both builds sometimes stall for minutes in SwapWindow (`_CGSWindowIsOrderedIn`, window server), a pre-existing issue unrelated to this task.
 - [x] Real audio. The FMOD Engine is downloaded: `~/Downloads/fmodstudioapi20123mac-installer.dmg`
   (2.01.23, the last 2.01.x; the game ships 2.01.05). Inside the volume "FMOD Programmers API Mac", the
@@ -223,21 +223,21 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Callbacks go to guest code through trampolines, marshalled onto a thread that has a guest `CPU`.
   - Check that the game's `.bank` files load in the runtime version we get. If only a newer 2.x is
     available, note the compatibility result.
-  - Keep `NOITAMAC_AUDIO=stub` working.
-  - `runtime/fmod.c` bridges to the C API via a table (`fmod.h`, own declarations; dlopens `build/fmod_api/lib`, not `build/fmod`, which is the fmod.dll module dir); `fmod_stub.c` is now the silent backend behind the same table. `NOITAMAC_AUDIO=fmod|stub` (default: fmod if it loads), `NOITAMAC_FMOD=<lib dir>`, `NOITAMAC_AUDIO_WAV=<file>` records the mix. Handles are generation-checked table entries, retired on DESTROYED. Callbacks run on FMOD's Studio thread, which gets a guest thread and a 64 MB stack (Thread_SetAttributes).
+  - Keep `MINA4MAC_AUDIO=stub` working.
+  - `runtime/fmod.c` bridges to the C API via a table (`fmod.h`, own declarations; dlopens `build/fmod_api/lib`, not `build/fmod`, which is the fmod.dll module dir); `fmod_stub.c` is now the silent backend behind the same table. `MINA4MAC_AUDIO=fmod|stub` (default: fmod if it loads), `MINA4MAC_FMOD=<lib dir>`, `MINA4MAC_AUDIO_WAV=<file>` records the mix. Handles are generation-checked table entries, retired on DESTROYED. Callbacks run on FMOD's Studio thread, which gets a guest thread and a 64 MB stack (Thread_SetAttributes).
   - All 25 banks (987 events) load in 2.01.23, and the game's 0x20105 header version is accepted. fmodtest (check.sh, 50 checks; skipped without build/fmod_api) checks the prototypes against the SDK. check.sh seed 14519 all ok. In-game: 168 events started in 70 s, no "FMOD error" logs; setParameterByName("lowpass") returns 74/30 at 0x47afdd, whose result the game ignores. The WAV capture has menu music, the click and in-game sound, but nobody has listened to it yet.
 - [x] Stubs for the remaining imports: WININET and WS2_32 fail cleanly (offline), `GetOpenFileNameA`
   returns cancel, `timeBeginPeriod`, `GetActiveWindow`, `CoTaskMemFree`, and the crash-handler thread
   APIs (`SuspendThread`/`GetThreadContext`) if they're reached. Check that nothing aborts in a
   30-minute session.
   - New `ws2_32.c` (WSAStartup → WSASYSNOTREADY; Socket::open 0x4326d0 gives up), `user32.c` (GetActiveWindow NULL, GetOpenFileNameA cancel); ShellExecuteA → macOS `open` (the Release Notes/modworkshop links, folders); `strftime`, `_getcwd`, `_findfirst64i32` (Lua `ModDoesFileExist`), MultiByteToWideChar, CreateProcessW fails (self-relaunch/ImageMagick). SuspendThread/Get/SetThreadContext/VirtualQuery/OpenProcess/K32GetProcessMemoryInfo are only in the dev profiler (MinHook, 0x80ce80, exits without WIZARD_PROFILER), and `_popen` is ffmpeg recording, so they stay unimplemented. envtest 236; check.sh seed 1144 all ok.
-  - Unattended 30-min New Game session: alive at 1800 s, SIGTERM exit 0, no unimplemented imports. The game auto-paused on focus loss somewhere after 10 min. SIGTERM skips NOITAMAC_COUNT_IMPORTS' atexit write.
+  - Unattended 30-min New Game session: alive at 1800 s, SIGTERM exit 0, no unimplemented imports. The game auto-paused on focus loss somewhere after 10 min. SIGTERM skips MINA4MAC_COUNT_IMPORTS' atexit write.
 - [x] Packaging.
   - Build a `Noita.app` that points to the user's own install.
   - Generated C is derived from the game and must not ship, so the app build runs the
     discover/lift/build pipeline locally against the user's exe (bring-your-own). Document that in the
     README.
-  - `tools/package_app.sh [--no-build] [install]` (NOITA_SRC; out NOITAMAC_APP, default build/Noita.app — ~/Applications/Noita.app is the old Wineskin wrapper, and the script refuses to overwrite apps without its `NoitamacGameDir` plist key): it checks the sha256 of noita.exe/msvcp120.dll, runs discover (if no pkl)/build_all with NOITA_DIR=install, and bundles noitamac + Homebrew SDL2 (+ FMOD dylibs from build/fmod_api) in Frameworks, re-signed ad hoc. The icon comes from the install's goggame-*.ico. `MacOS/Noita` is a bash script: NOITA_DIR = the install (read in place, no copy), NOITAMAC_FMOD=Frameworks, `caffeinate -d -u`, log to ~/Library/Logs/noitamac.log.
+  - `tools/package_app.sh [--no-build] [install]` (NOITA_SRC; out MINA4MAC_APP, default build/Noita.app — ~/Applications/Noita.app is the old Wineskin wrapper, and the script refuses to overwrite apps without its `Mina4macGameDir` plist key): it checks the sha256 of noita.exe/msvcp120.dll, runs discover (if no pkl)/build_all with NOITA_DIR=install, and bundles mina4mac + Homebrew SDL2 (+ FMOD dylibs from build/fmod_api) in Frameworks, re-signed ad hoc. The icon comes from the install's goggame-*.ico. `MacOS/Noita` is a bash script: NOITA_DIR = the install (read in place, no copy), MINA4MAC_FMOD=Frameworks, `caffeinate -d -u`, log to ~/Library/Logs/mina4mac.log.
   - Verified: `open build/Noita.app` renders the menu (build/app_menu.png, NSHighResolutionCapable, 1280x752 window at 2x), and vmmap shows the bundled SDL2/FMOD loaded; `codesign --verify --deep --strict` ok; SIGTERM exits. New top-level README.md documents the bring-your-own build.
 - [ ] Manual playtest (needs a person; the loop should skip it): rebind a key in Options (keyboard and
   mouse), and play one 30+ minute session. Record crashes, hangs or anything wrong.

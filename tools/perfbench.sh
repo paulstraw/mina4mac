@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Performance benchmark, the same scene in noitamac and in the Wine build: tools/perfbench is a mod that pins
+# Performance benchmark, the same scene in mina4mac and in the Wine build: tools/perfbench is a mod that pins
 # WORLD_SEED, floods the start area with water, oil and lava 1 s after spawning, then logs the real time of 1800
 # frames and writes a summary (fps, frame-time percentiles, fps per 300 frames) to <game dir>/perfbench.txt.
 # The game is started with `-no_logo_splashes -gamemode 0`, which skips the menu and starts a new run (this
 # replaces the run in progress in save00). Like tools/determinism.sh, install turns the mod sandbox off (the mod
 # writes a file) and remove turns it back on.
-#   tools/perfbench.sh install noitamac|wine     copy + enable the mod (game not running)
-#   tools/perfbench.sh run noitamac|wine [out]   run the benchmark once, print the summary (and copy it to out);
+#   tools/perfbench.sh install mina4mac|wine     copy + enable the mod (game not running)
+#   tools/perfbench.sh run mina4mac|wine [out]   run the benchmark once, print the summary (and copy it to out);
 #                                                with UNCAPPED=1, vsync is off and the frame limit 1000 for the run
-#   tools/perfbench.sh remove noitamac|wine      disable + delete it again
-# noitamac runs build/noitamac (or $NOITAMAC_BIN, e.g. a copy for A/B runs) with extra arguments in NOITAMAC_ARGS.
+#   tools/perfbench.sh remove mina4mac|wine      disable + delete it again
+# mina4mac runs build/mina4mac (or $MINA4MAC_BIN, e.g. a copy for A/B runs) with extra arguments in MINA4MAC_ARGS.
 # The Wine build runs the Sikarugir wrapper (~/Applications/Noita Sikarugir.app), unchanged apart from its Program
 # Flags during the run. Keep the game window visible and the Mac otherwise idle: an occluded window can stall a
 # frame for many seconds, and results vary by about ±7% between runs, so compare medians of interleaved runs.
@@ -21,10 +21,10 @@ WINE_PREFIX="$APP/Contents/SharedSupport/prefix"
 ARGS=(-no_logo_splashes -gamemode 0)
 dirs() {
     case "$1" in
-    noitamac) GAME=build/game SAVE="$HOME/Library/Application Support/noitamac/AppData/LocalLow/Nolla_Games_Noita" ;;
+    mina4mac) GAME=build/game SAVE="$HOME/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita" ;;
     wine) GAME="$WINE_PREFIX/drive_c/GOG Games/Noita"
           SAVE="$WINE_PREFIX/drive_c/users/Sikarugir/AppData/LocalLow/Nolla_Games_Noita" ;;
-    *) echo "noitamac or wine"; exit 2 ;;
+    *) echo "mina4mac or wine"; exit 2 ;;
     esac
 }
 
@@ -70,9 +70,9 @@ run)
         cleanup() { sed -i '' -E "s/ vsync=\"[0-9]+\"/$v/; s/ framerate=\"[0-9]+\"/$f/" "$CFG"; }
     fi
     trap 'stop; cleanup' EXIT
-    if [ "$2" = noitamac ]; then
+    if [ "$2" = mina4mac ]; then
         # shellcheck disable=SC2086
-        caffeinate -d -u "${NOITAMAC_BIN:-build/noitamac}" "${ARGS[@]}" ${NOITAMAC_ARGS:-} >"$log" 2>&1 &
+        caffeinate -d -u "${MINA4MAC_BIN:-build/mina4mac}" "${ARGS[@]}" ${MINA4MAC_ARGS:-} >"$log" 2>&1 &
         pid=$!
         stop() { kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true; }
     else

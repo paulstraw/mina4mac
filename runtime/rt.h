@@ -32,15 +32,15 @@ GuestFn rt_lookup(uint32_t addr);
 #define THUNK_STRIDE 16u
 
 // Nonzero: log every host import call to stderr (dll!name, return address, the first stack arguments,
-// then eax/edx and the bytes popped on return). Set by the launcher from NOITAMAC_TRACE.
+// then eax/edx and the bytes popped on return). Set by the launcher from MINA4MAC_TRACE.
 extern int rt_trace;
 // NULL: trace every import; otherwise only those whose "dll!name" contains one of these comma-separated
-// substrings (case-insensitive). Set by the launcher from NOITAMAC_TRACE when it isn't "1".
+// substrings (case-insensitive). Set by the launcher from MINA4MAC_TRACE when it isn't "1".
 extern const char *rt_trace_filter;
 int rt_traced(const char *dll, const char *name);  // rt_trace, and dll!name passes rt_trace_filter
 
 // Count calls per import thunk (including GetProcAddress thunks) and write "calls<TAB>dll!name" for every
-// thunk to `path` at exit. Set by the launcher from NOITAMAC_COUNT_IMPORTS.
+// thunk to `path` at exit. Set by the launcher from MINA4MAC_COUNT_IMPORTS.
 void rt_count_imports(const char *path);
 
 // Register the host implementation of dll!name (dll matched case-insensitively). May be called before

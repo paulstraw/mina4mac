@@ -1,10 +1,10 @@
-// The noitamac launcher: map noita.exe and the recompiled DLLs (msvcp120.dll) from the game directory, set
+// The mina4mac launcher: map noita.exe and the recompiled DLLs (msvcp120.dll) from the game directory, set
 // up the guest process and main thread, bind imports (to recompiled DLLs' exports, otherwise to host
 // thunks), run the DLLs' entry points (DllMain) and then the exe's recompiled entry point.
-//   noitamac [args]     (game files from $NOITA_DIR, default build/game; args go to the game)
-//   NOITAMAC_TRACE=1    log every host import call to stderr
-//   NOITAMAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
-//   NOITAMAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
+//   mina4mac [args]     (game files from $NOITA_DIR, default build/game; args go to the game)
+//   MINA4MAC_TRACE=1    log every host import call to stderr
+//   MINA4MAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
+//   MINA4MAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,10 +28,10 @@ int main(int argc, char **argv) {
     if (!dir || !*dir) dir = "build/game";
     char path[4096];
     snprintf(path, sizeof path, "%s/noita.exe", dir);
-    const char *trace = getenv("NOITAMAC_TRACE");
+    const char *trace = getenv("MINA4MAC_TRACE");
     rt_trace = trace && *trace && strcmp(trace, "0");
     if (rt_trace && strcmp(trace, "1")) rt_trace_filter = trace;
-    const char *counts = getenv("NOITAMAC_COUNT_IMPORTS");
+    const char *counts = getenv("MINA4MAC_COUNT_IMPORTS");
     if (counts && *counts) rt_count_imports(counts);
 
     rt_init();
@@ -56,11 +56,11 @@ int main(int argc, char **argv) {
     for (int i = 0; i < NDLLS; i++) slots += rt_bind_imports(DLLS[i].base);
     crt_init(argc, argv);
     if (chdir(dir)) { perror(dir); return 2; }  // the game finds data/ etc. relative to its own directory
-    if (rt_trace) fprintf(stderr, "[noitamac] mapped %s, bound %d import slots, entry %#x\n", path, slots, entry);
+    if (rt_trace) fprintf(stderr, "[mina4mac] mapped %s, bound %d import slots, entry %#x\n", path, slots, entry);
 
     for (int i = 0; i < NDLLS; i++) {  // DllMain(hinstDLL, DLL_PROCESS_ATTACH, lpReserved)
         uint32_t args[] = {DLLS[i].base, DLL_PROCESS_ATTACH, 1};  // non-NULL: a static load
-        if (rt_trace) fprintf(stderr, "[noitamac] %s DllMain\n", DLLS[i].file);
+        if (rt_trace) fprintf(stderr, "[mina4mac] %s DllMain\n", DLLS[i].file);
         if (!call_guest(&c, DLLS[i].entry, 3, args)) {
             fprintf(stderr, "%s: DllMain failed\n", DLLS[i].file);
             return 2;
@@ -71,6 +71,6 @@ int main(int argc, char **argv) {
     c.esp -= 4;
     wr32(c.esp, EXIT_RET);
     guest_call(&c, entry);
-    fprintf(stderr, "[noitamac] entry point returned %#x\n", c.eax);
+    fprintf(stderr, "[mina4mac] entry point returned %#x\n", c.eax);
     return (int)c.eax;
 }

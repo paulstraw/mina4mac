@@ -5,7 +5,7 @@
      data.wak: 16-byte header (u32 0, u32 file count, u32 end of the file table = offset of the first file's data,
      u32 0), then per file (u32 data offset from the start of the wak, u32 size, u32 name length, name bytes: a
      '/'-separated path like "data/shaders/common.frag", no terminator), then the file data, uncompressed.
-  2. Reads a call-count file from a game run (NOITAMAC_COUNT_IMPORTS=<file> build/noitamac) and lists the opengl32
+  2. Reads a call-count file from a game run (MINA4MAC_COUNT_IMPORTS=<file> build/mina4mac) and lists the opengl32
      names that were called, with counts, and how many were only looked up (GetProcAddress) or imported.
   3. Checks every called and looked-up name against the macOS SDK headers: OpenGL/gl.h + glext.h for the legacy
      2.1 context, OpenGL/gl3.h + gl3ext.h for the core 4.1 context.

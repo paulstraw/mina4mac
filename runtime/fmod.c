@@ -1,11 +1,11 @@
 // FMOD Studio 2.01 (fmodstudio.dll, fmod.dll) bridged to the native macOS FMOD Engine. The 42 imports are
 // C++ member functions with __stdcall, so `this` is the first stack argument. Each one calls the matching
 // C API function through a backend table (fmod.h):
-//   - NOITAMAC_AUDIO=fmod: the native libfmod/libfmodstudio dylibs, dlopened from $NOITAMAC_FMOD or
+//   - MINA4MAC_AUDIO=fmod: the native libfmod/libfmodstudio dylibs, dlopened from $MINA4MAC_FMOD or
 //     <launcher dir>/fmod_api/lib (tools/setup_fmod.sh installs them there). Exits if they don't load.
-//   - NOITAMAC_AUDIO=stub: the silent backend (fmod_stub.c).
+//   - MINA4MAC_AUDIO=stub: the silent backend (fmod_stub.c).
 //   - unset: the dylibs if they load, otherwise the stub.
-// NOITAMAC_AUDIO_WAV=<file> records the mix to a WAV file (FMOD's WAV writer output) instead of playing it.
+// MINA4MAC_AUDIO_WAV=<file> records the mix to a WAV file (FMOD's WAV writer output) instead of playing it.
 // The game's 2.01.05 banks and header version work with the 2.01.23 runtime.
 //
 // Handles. The guest sees 32-bit handles {generation:8, slot:20, kind:4} into a host table holding the host
@@ -131,7 +131,7 @@ static FmodApi NATIVE;
 static const char *load_native(void) {
     static char err[PATH_MAX + 256];
     char dir[PATH_MAX], exe[PATH_MAX], path[PATH_MAX];
-    const char *env = getenv("NOITAMAC_FMOD");
+    const char *env = getenv("MINA4MAC_FMOD");
     if (env) snprintf(dir, sizeof dir, "%s", env);
     else {
         uint32_t n = sizeof exe;
@@ -159,9 +159,9 @@ static const char *load_native(void) {
 }
 static void select_backend(void) {
     if (F) return;
-    const char *mode = getenv("NOITAMAC_AUDIO");
+    const char *mode = getenv("MINA4MAC_AUDIO");
     if (mode && strcmp(mode, "stub") && strcmp(mode, "fmod")) {
-        fprintf(stderr, "[noitamac] NOITAMAC_AUDIO=%s: expected fmod or stub\n", mode);
+        fprintf(stderr, "[mina4mac] MINA4MAC_AUDIO=%s: expected fmod or stub\n", mode);
         mode = NULL;
     }
     if (mode && !strcmp(mode, "stub")) { F = &FMOD_STUB; return; }
@@ -173,8 +173,8 @@ static void select_backend(void) {
             F->Thread_SetAttributes(t, FM_THREAD_AFFINITY_GROUP_DEFAULT, FM_THREAD_PRIORITY_DEFAULT, HOST_STACK);
         return;
     }
-    if (mode) { fprintf(stderr, "[noitamac] NOITAMAC_AUDIO=fmod: %s\n", err); exit(2); }
-    fprintf(stderr, "[noitamac] no FMOD (%s; run tools/setup_fmod.sh): audio is silent\n", err);
+    if (mode) { fprintf(stderr, "[mina4mac] MINA4MAC_AUDIO=fmod: %s\n", err); exit(2); }
+    fprintf(stderr, "[mina4mac] no FMOD (%s; run tools/setup_fmod.sh): audio is silent\n", err);
     F = &FMOD_STUB;
 }
 
@@ -274,7 +274,7 @@ HOST(fmodstudio, create, "?create@System@Studio@FMOD@@SG?AW4FMOD_RESULT@@PAPAV12
 HOST(fmodstudio, sys_initialize, "?initialize@System@Studio@FMOD@@QAG?AW4FMOD_RESULT@@HIIPAX@Z", 20) {
     OBJ(FMOD_STUDIO_SYSTEM, K_SYSTEM, 0);
     void *extra = GP(4);  // the WAV writer's file name, if the game chose that output
-    const char *wav = getenv("NOITAMAC_AUDIO_WAV");  // record the mix instead of playing it, to check audio without ears
+    const char *wav = getenv("MINA4MAC_AUDIO_WAV");  // record the mix instead of playing it, to check audio without ears
     FMOD_SYSTEM *core = NULL;
     if (wav && F->Studio_System_GetCoreSystem(o, &core) == FM_OK && F->System_SetOutput(core, FM_OUTPUTTYPE_WAVWRITER) == FM_OK)
         extra = (void *)wav;

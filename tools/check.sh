@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
-# hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, fmodtest (if FMOD is set up), then a launcher run (informational: prints where build/noitamac stops).
+# hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, fmodtest (if FMOD is set up), then a launcher run (informational: prints where build/mina4mac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
 # difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest/gltest/fmodtest fails. A higher lifted count raises the baseline.
 # Usage: tools/check.sh [seed]   (default: random; printed so a run can be repeated)
@@ -142,7 +142,7 @@ fi
 
 # The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.
 # The scripted clicks pick New Game, then the first game mode (window points of the default 1280x720 window).
-NOITAMAC_CLICKS="40:639,352;45:445,250" timeout 300 build/noitamac >"$LOG/launcher.log" 2>&1
+MINA4MAC_CLICKS="40:639,352;45:445,250" timeout 300 build/mina4mac >"$LOG/launcher.log" 2>&1
 rc=$?
 stop=$(grep -m1 -E '^(unimplemented|unimpl|no function|guest)' "$LOG/launcher.log" || tail -1 "$LOG/launcher.log")
 echo "launcher: exit $rc, $stop"

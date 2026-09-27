@@ -66,11 +66,11 @@ class Program:
         self.md.detail = True
         self.noreturn_ops = {f"dword ptr [{slot:#x}]" for slot, (_, name) in self.img.imports.items()
                              if name in NORETURN_IMPORTS}
-        # Memory ordering (tools/memorder.py): NOITAMAC_TSO=auto (default) gives the instructions it
+        # Memory ordering (tools/memorder.py): MINA4MAC_TSO=auto (default) gives the instructions it
         # finds acquire loads and release stores; all does that for every instruction; off for none.
-        self.tso_mode = os.environ.get("NOITAMAC_TSO", "auto")
+        self.tso_mode = os.environ.get("MINA4MAC_TSO", "auto")
         if self.tso_mode not in ("auto", "all", "off"):
-            raise ValueError(f"NOITAMAC_TSO={self.tso_mode}")
+            raise ValueError(f"MINA4MAC_TSO={self.tso_mode}")
         self._ordered = None
 
     def is_ordered(self, a):

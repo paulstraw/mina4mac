@@ -1,4 +1,4 @@
-# noitamac: native Noita on Apple Silicon via static recompilation
+# mina4mac: native Noita on Apple Silicon via static recompilation
 
 ## Context
 
@@ -236,12 +236,12 @@ Gotchas that already bit us:
   - Record the memory map in `runtime/README.md`.
   - `heap.c/h` (size classes + page spans, one os_unfair_lock, first-fit spans: fine for now), `proc.c/h` (`rt_process_init(exe_base)` sets PEB + static TLS index 0; `rt_thread_init(c)` gives slot n a guarded 1 MB stack, TEB, TLS block copy; TLS callbacks not run yet). HLE files `msvcr120.c`/`kernel32.c` now hold malloc/free/realloc/calloc/_msize/*_crt/_aligned_*/new/delete/Concurrency Alloc/Free and GetProcessHeap/Heap{Alloc,Free,ReAlloc,Size}; operator new OOM exits 6 (no bad_alloc), errno not set.
   - `runtime/env_test.c` (envtest in check.sh, 48 checks incl. 8-thread hammer, guard fault, imports via thunks). check.sh seed 2718: 97087 lifted; default 2192 / x87 160 pass, 0 fail/native_err; all tests ok.
-- [x] Add a `build/noitamac` launcher (`runtime/main.c`, linked with `build/gen_all` objects).
+- [x] Add a `build/mina4mac` launcher (`runtime/main.c`, linked with `build/gen_all` objects).
   - It maps `noita.exe` sections from `build/game/noita.exe` itself (not `image.bin`), sets up the process
     and calls the entry point 0xdfadb0.
-  - `NOITAMAC_TRACE=1` logs every host import call (name, args, return).
+  - `MINA4MAC_TRACE=1` logs every host import call (name, args, return).
   - Expected result: it aborts at the first unimplemented import. Record the trace in the note.
-  - `rt_map_pe(path, base)` (rt.c; headers + sections + HIGHLOW relocs, returns entry) and `rt_trace` (logs `[import] dll!name(4 stack args) from ret` / `-> eax edx popped N`); build_all links `build/noitamac` with main/heap/proc/msvcr120/kernel32. `tools/loadtest.py` + `runtime/load_test.c` (in check.sh): all 8 modules byte-identical to pe.py's image. check.sh also prints where the launcher stops.
+  - `rt_map_pe(path, base)` (rt.c; headers + sections + HIGHLOW relocs, returns entry) and `rt_trace` (logs `[import] dll!name(4 stack args) from ret` / `-> eax edx popped N`); build_all links `build/mina4mac` with main/heap/proc/msvcr120/kernel32. `tools/loadtest.py` + `runtime/load_test.c` (in check.sh): all 8 modules byte-identical to pe.py's image. check.sh also prints where the launcher stops.
   - Trace: `bound 635 import slots, entry 0xdfadb0` → `KERNEL32.dll!GetSystemTimeAsFileTime(0x1a10ffe8, …) from 0xdfb1fb` → unimplemented, exit 4 (first call of `__security_init_cookie`). check.sh seed 1618: 97087 lifted; default 2280 / x87 160 pass, 0 fail/native_err; all tests ok.
 - [x] Implement KERNEL32/MSVCR120 imports until CRT startup reaches `_initterm`, including
   `__security_init_cookie`'s time/pid/tid/counter calls and `__set_app_type`, `_controlfp_s` and friends.
@@ -256,7 +256,7 @@ Gotchas that already bit us:
   - Problematic: `type_info::name` (359 calls, component names; undname.c matches llvm-undname on 2736/2758 RTTI names, 22 local-class/member-pointer names fall back to the decorated name), the logger's `_fsopen("logger.txt")`, ConcRT critical_section, GetCurrentDirectoryW+PathAppendW. Gotchas: no CR/LF text translation; sin/cos/pow use host libm (may differ in last bit); exceptions still unsupported. check.sh seed 2468: 97087 lifted; default 2283 / x87 157 pass, 0 fail/native_err; envtest 122 checks; new undnametest ok.
 - [x] Run until the program's main entry (WinMain → SDL's `SDL_main`) is entered. Identify its address,
   note it, and log entry with the trace.
-  - WinMain = SDL2main's stub 0xdfb400 (statically linked; parses GetCommandLineW at 0xdfb410) → **SDL_main = 0x80b6f0** (called at 0xdfb52b). New `runtime/sdl2_stdlib.c` HLEs SDL_malloc/free/wcslen/isspace/iconv_string (UTF-16LE→UTF-8 only) and SDL_SetMainReady, which under NOITAMAC_TRACE logs `[noitamac] entering SDL_main 0x80b6f0 (argc 1, "noita.exe")`; gen_sdl.py must skip these (guest-heap, not host SDL). GetCommandLineA/W live in msvcr120.c next to crt_init.
+  - WinMain = SDL2main's stub 0xdfb400 (statically linked; parses GetCommandLineW at 0xdfb410) → **SDL_main = 0x80b6f0** (called at 0xdfb52b). New `runtime/sdl2_stdlib.c` HLEs SDL_malloc/free/wcslen/isspace/iconv_string (UTF-16LE→UTF-8 only) and SDL_SetMainReady, which under MINA4MAC_TRACE logs `[mina4mac] entering SDL_main 0x80b6f0 (argc 1, "noita.exe")`; gen_sdl.py must skip these (guest-heap, not host SDL). GetCommandLineA/W live in msvcr120.c next to crt_init.
   - Next blocker: `SHELL32!SHGetKnownFolderPath` from 0xdb9067 (early in SDL_main). check.sh seed 9001: 97087 lifted; default 2225 / x87 156 pass, 0 fail/native_err; envtest 130 checks; all tests ok.
 
 ### Phase 3: first window
@@ -274,5 +274,5 @@ Gotchas that already bit us:
   - Record how far execution got and the next blocker (probably the opengl32 LoadLibrary/GetProcAddress
     path).
   - Window "Noita - Build Jan 25 2025 - 16:31:25" (2560x1440; SDL_SetWindowFullscreen(DESKTOP) returns -1, as it does natively here) with a GL context, swap interval 1. `tools/screenshot.sh` (+ `tools/winlist.c`) saved `build/window.png` (black: the game clears to black). The FGL loader loads user32/gdi32/opengl32 and GetProcAddress's every GL name *before* SDL_Init and makes GL calls with no context, so GetProcAddress returns `dll!name` thunks for any name, and `opengl32.c` forwards ~12 GL 1.1 calls only when a CGL context is current.
-  - New HLE: `shell32.c` (LocalLow → `~/Library/Application Support/noitamac/AppData/LocalLow`), `galaxy.c` (offline, accessors NULL), `kernel32_file.c`, `thread.c` (18 std::threads start), kernel32 handle table/LoadLibraryA/Virtual*/GetSystemInfo/GetVersionExA, `__RTDynamicCast`/`__RTtypeid` (MI/VI simplified). The mod sandbox VirtualProtects and overwrites LuaJIT io/os/ffi functions with `mov [0],0`; that lands on thunks with no effect, so the LuaJIT bridge must sandbox itself. Gotcha: with the display asleep, SDL_GL_SwapWindow blocks on vsync (`caffeinate -u`).
+  - New HLE: `shell32.c` (LocalLow → `~/Library/Application Support/mina4mac/AppData/LocalLow`), `galaxy.c` (offline, accessors NULL), `kernel32_file.c`, `thread.c` (18 std::threads start), kernel32 handle table/LoadLibraryA/Virtual*/GetSystemInfo/GetVersionExA, `__RTDynamicCast`/`__RTtypeid` (MI/VI simplified). The mod sandbox VirtualProtects and overwrites LuaJIT io/os/ffi functions with `mov [0],0`; that lands on thunks with no effect, so the LuaJIT bridge must sandbox itself. Gotcha: with the display asleep, SDL_GL_SwapWindow blocks on vsync (`caffeinate -u`).
   - Next blocker: `fmodstudio!FMOD::Studio::System::create` (FMOD 2.01.05) from 0x47a6fb. build/game also lacks `data/`, so the logger reports missing data/ui_gfx and translations. envtest 181 checks. check.sh seed 4096: 97087 lifted; default 2229 / x87 159 pass, 0 fail/native_err; all tests ok.

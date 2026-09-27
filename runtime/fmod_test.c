@@ -100,7 +100,7 @@ int main(void) {
     CPU cpu = {.fpu_cw = 0x27f}, *c = &cpu;
     rt_thread_init(c);
     MAIN_TID = rd32(c->fs_base + TEB_TID);
-    setenv("NOITAMAC_AUDIO", "fmod", 1);  // exit rather than fall back to the stub
+    setenv("MINA4MAC_AUDIO", "fmod", 1);  // exit rather than fall back to the stub
     uint32_t out = heap_calloc(16, 4), buf = heap_alloc(256);
 
     // The game's init sequence (0x47a6f5..0x47a8b7), with no-sound output.

@@ -8,7 +8,7 @@ cd "$(dirname "$0")/.."
 OUT=${1:-build/window.png}
 DELAY=${2:-0.3}
 clang -O2 tools/winlist.c -framework CoreGraphics -framework CoreFoundation -o build/winlist || exit 1
-build/noitamac >build/screenshot.log 2>&1 &
+build/mina4mac >build/screenshot.log 2>&1 &
 pid=$!
 for _ in $(seq 1 1000); do
     win=$(build/winlist "$pid" Noita | head -1)

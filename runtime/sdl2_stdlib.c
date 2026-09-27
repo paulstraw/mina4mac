@@ -43,7 +43,7 @@ HOST_CDECL(SDL2, SDL_iconv_string) {
 // trace. argc and argv are in ebx and edi there (the lifted code syncs registers to c around calls).
 HOST_CDECL(SDL2, SDL_SetMainReady) {
     if (!rt_trace) return;
-    fprintf(stderr, "[noitamac] entering SDL_main %#x (argc %u", SDL_MAIN, c->ebx);
+    fprintf(stderr, "[mina4mac] entering SDL_main %#x (argc %u", SDL_MAIN, c->ebx);
     for (uint32_t i = 0; i < c->ebx; i++) fprintf(stderr, ", \"%s\"", (char *)P(rd32(c->edi + 4 * i)));
     fprintf(stderr, ")\n");
 }

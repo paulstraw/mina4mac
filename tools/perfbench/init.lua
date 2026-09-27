@@ -1,4 +1,4 @@
--- noitamac performance benchmark (tools/perfbench.sh installs and runs it). Pins the world seed, protects the
+-- mina4mac performance benchmark (tools/perfbench.sh installs and runs it). Pins the world seed, protects the
 -- player, floods the start area with water, oil and lava (fire, steam, lots of moving cells), then records the
 -- real time of every frame and writes "PERFBENCH ..." lines to perfbench.txt in the game directory.
 -- Start it with `-no_logo_splashes -gamemode 0` so no menu clicks are needed; don't touch the controls.

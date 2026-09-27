@@ -26,11 +26,11 @@ the HLE CRT's errno at `+0xFF0`.
 ## Guest view of the host
 
 The launcher's working directory is the game directory. The host file system is drive `Z:` (as in Wine), so
-`GetCurrentDirectoryW` returns e.g. `Z:\Users\me\noitamac\build\game`; `host_path` (hle.c) maps relative and `Z:`
-paths back (`NOITAMAC_TRACE_FILES=1` logs every path the guest passes to the file APIs). Game data (`data/`, `mods/`,
+`GetCurrentDirectoryW` returns e.g. `Z:\Users\me\mina4mac\build\game`; `host_path` (hle.c) maps relative and `Z:`
+paths back (`MINA4MAC_TRACE_FILES=1` logs every path the guest passes to the file APIs). Game data (`data/`, `mods/`,
 `config.xml`) is copied into the game directory by `tools/setup_game.sh`. stdio does no text-mode CR/LF translation. Only the "C" locale exists. Known folders
 (`SHGetKnownFolderPath`, e.g. `LocalLow`, where the game keeps its saves) live under
-`~/Library/Application Support/noitamac/AppData/`.
+`~/Library/Application Support/mina4mac/AppData/`.
 
 Kernel object handles (threads, find handles) are small multiples of 4 from one table (`kernel32.h`).
 `LoadLibraryA` succeeds for recompiled modules (the handle is the base) and for the DLLs the runtime stands in
@@ -46,7 +46,7 @@ them. Every LuaJIT object lives in the guest heap, so the pointers the guest see
 | File | What |
 |---|---|
 | `cpu.h` | `CPU`, guest memory accessors and the x87/SSE/atomic helpers used by generated code |
-| `main.c` | the launcher, `build/noitamac`: maps `noita.exe` and msvcp120.dll, binds imports, runs DllMain and the entry point |
+| `main.c` | the launcher, `build/mina4mac`: maps `noita.exe` and msvcp120.dll, binds imports, runs DllMain and the entry point |
 | `rt.c`/`rt.h` | memory setup, PE mapping (`rt_map_pe`), function lookup, import binding (thunks, or exports of recompiled modules) and tracing, `guest_call` |
 | `host.h` | `HOST_CDECL`/`HOST_STDCALL`/`HOST` declarations and argument/return helpers for host imports |
 | `heap.c`/`heap.h` | the guest heap allocator |
@@ -61,11 +61,11 @@ them. Every LuaJIT object lives in the guest heap, so the pointers the guest see
 | `wininet.c` | WININET offline: `InternetOpenA` fails (ERROR_INTERNET_NAME_NOT_RESOLVED), and so does the rest |
 | `ws2_32.c` | WS2_32 offline: `WSAStartup` fails (WSASYSNOTREADY), the rest fail with WSANOTINITIALISED |
 | `user32.c` | USER32/COMDLG32: `GetActiveWindow` is NULL, `GetOpenFileNameA` is cancelled |
-| `fmod.c`, `fmod.h` | FMOD Studio/core bridged to the native macOS FMOD Engine (dlopened from `build/fmod_api/lib`, installed by `tools/setup_fmod.sh`; `NOITAMAC_AUDIO=fmod\|stub`, `NOITAMAC_FMOD=<lib dir>`): 32-bit generation-checked handles into a host table, instance handles retired on FMOD's DESTROYED callback, the game's callbacks run on FMOD's Studio thread (which gets a guest thread) with marker/beat parameters copied to the guest stack |
+| `fmod.c`, `fmod.h` | FMOD Studio/core bridged to the native macOS FMOD Engine (dlopened from `build/fmod_api/lib`, installed by `tools/setup_fmod.sh`; `MINA4MAC_AUDIO=fmod\|stub`, `MINA4MAC_FMOD=<lib dir>`): 32-bit generation-checked handles into a host table, instance handles retired on FMOD's DESTROYED callback, the game's callbacks run on FMOD's Studio thread (which gets a guest thread) with marker/beat parameters copied to the guest stack |
 | `fmod_stub.c` | the silent FMOD backend behind the same bridge (the default without the dylibs): every call succeeds, banks hold no events, only DESTROYED fires (on release) |
 | `lua51.c` | lua51.dll bridged to host LuaJIT 2.1 (`third_party/luajit`, ARM64 JIT; built into `build/luajit/` by build_all): states allocate from the guest heap, guest C functions run through a trampoline on `rt_thread_cpu`, Lua errors unwind through recompiled frames (guest state restored in cleanups), the mod sandbox's patches of the io/os/package/debug/ffi thunks disable those libraries |
 | `opengl32.c` | the GL calls the game makes up to the main menu (GL 1.1 state, 2.0 shaders/programs/uniforms, buffers, vertex arrays, ARB FBOs), forwarded to the host's legacy 2.1 context when one is current (no-ops otherwise), until the generated GL bridge exists |
-| `sdl2.c` | SDL2 bridge runtime: handles, surface mirrors, `SDL_PollEvent` (plus scripted clicks, `NOITAMAC_CLICKS="t:x,y;..."`: seconds after the first poll, window points), `SDL_GL_SwapWindow` (plus a frame counter, `NOITAMAC_FPS=1`: FPS and average/worst frame time each second, on stderr and in the window title) |
+| `sdl2.c` | SDL2 bridge runtime: handles, surface mirrors, `SDL_PollEvent` (plus scripted clicks, `MINA4MAC_CLICKS="t:x,y;..."`: seconds after the first poll, window points), `SDL_GL_SwapWindow` (plus a frame counter, `MINA4MAC_FPS=1`: FPS and average/worst frame time each second, on stderr and in the window title) |
 | `sdl2_stdlib.c` | the SDL2 C-library helpers SDL2main's WinMain uses (SDL_malloc/free/wcslen/isspace/iconv_string) and SDL_SetMainReady, which traces SDL_main's entry |
 | `hle.c`/`hle.h` | helpers shared by HLE files: guest strings, UTF-8/16, Windows paths, errno |
 | `sync.c`/`sync.h` | pool of host mutex/condvar objects behind guest critical sections and ConcRT objects |

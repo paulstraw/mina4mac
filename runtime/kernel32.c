@@ -358,7 +358,7 @@ HOST_STDCALL(kernel32, VirtualProtect, 16) {
     uint32_t addr = ARG(0), old = ARG(3);
     int code = in_image_code(addr) || (addr >= THUNK_BASE);
     if (old) wr32(old, code ? PAGE_EXECUTE_READ : PAGE_READWRITE);
-    if (rt_trace && code) fprintf(stderr, "[noitamac] VirtualProtect(%#x, %#x) on code: patches won't take effect\n", addr, ARG(1));
+    if (rt_trace && code) fprintf(stderr, "[mina4mac] VirtualProtect(%#x, %#x) on code: patches won't take effect\n", addr, ARG(1));
     ret_i32(c, 1);
 }
 

@@ -243,14 +243,14 @@ static void event_to_guest(SDL_Event *e, uint32_t g) {
 }
 
 // Scripted input for driving the game without a person (the game reads the mouse only through events):
-// NOITAMAC_CLICKS="t:x,y[;t:x,y...]" left-clicks at window point (x, y), t seconds after the first
+// MINA4MAC_CLICKS="t:x,y[;t:x,y...]" left-clicks at window point (x, y), t seconds after the first
 // SDL_PollEvent: the pointer moves there, the button goes down 100 ms later and comes up 100 ms after that.
 static void scripted_input(void) {
     static const char *next;
     static uint32_t t0, up;  // up: when a pending click's release is due
     if (!t0) {
         t0 = SDL_GetTicks() | 1;
-        next = getenv("NOITAMAC_CLICKS");
+        next = getenv("MINA4MAC_CLICKS");
     }
     SDL_Window *w = SDL_GL_GetCurrentWindow();
     SDL_Event e = {0};
@@ -281,7 +281,7 @@ static void scripted_input(void) {
     down = SDL_GetTicks() + 100;  // some widgets (dialog buttons) only take a press they were hovered before
 }
 
-// NOITAMAC_TRACE=...,SDL_WINDOWEVENT logs the window events the game receives, with the window's size,
+// MINA4MAC_TRACE=...,SDL_WINDOWEVENT logs the window events the game receives, with the window's size,
 // drawable size and flags at that moment.
 static void trace_window_event(const SDL_Event *e) {
     SDL_Window *w = SDL_GetWindowFromID(e->window.windowID);
@@ -302,14 +302,14 @@ HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
     ret_i32(c, r);
 }
 
-// NOITAMAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
+// MINA4MAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
 // time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title.
 static void count_frame(SDL_Window *w) {
     static int on = -1, frames;
     static uint64_t last, t0;
     static double worst;
     static char title[256];
-    if (on < 0) on = getenv("NOITAMAC_FPS") && strcmp(getenv("NOITAMAC_FPS"), "0");
+    if (on < 0) on = getenv("MINA4MAC_FPS") && strcmp(getenv("MINA4MAC_FPS"), "0");
     if (!on) return;
     uint64_t now = SDL_GetPerformanceCounter(), hz = SDL_GetPerformanceFrequency();
     if (!last) {
