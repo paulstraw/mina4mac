@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <time.h>
 
+#include "joblog.h"
+
 enum { MAX_SYNC = 1 << 16 };
 static Sync *POOL[MAX_SYNC + 1];  // index 0 unused: id 0 means "not initialised"
 static uint32_t FREE[MAX_SYNC], NFREE, NUSED;
@@ -43,7 +45,16 @@ void sync_free(uint32_t id) {
     pthread_mutex_unlock(&LOCK);
 }
 
+static int timed_wait(Sync *s, pthread_mutex_t *m, uint32_t ms);
 int sync_wait(Sync *s, pthread_mutex_t *m, uint32_t ms) {
+    if (!joblog_on) return timed_wait(s, m, ms);
+    uint64_t t0 = joblog_now();
+    int r = timed_wait(s, m, ms);
+    joblog_cond(t0, joblog_now());
+    return r;
+}
+
+static int timed_wait(Sync *s, pthread_mutex_t *m, uint32_t ms) {
     if (ms == 0xffffffffu) return !pthread_cond_wait(&s->cv, m);
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);

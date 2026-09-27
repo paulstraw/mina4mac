@@ -102,7 +102,7 @@ fi
 
 # sdltest needs build/gen_all/sdl2_gen.c and sdl2_layout.h, which build_all generates (tools/gen_sdl.py).
 if clang -O2 -ffp-contract=off -fno-strict-aliasing -Wall -Wextra -Werror -I runtime -I build/gen_all $(sdl2-config --cflags) \
-        runtime/sdl_test.c runtime/rt.c runtime/heap.c runtime/hle.c runtime/sdl2.c runtime/sdl2_stdlib.c \
+        runtime/sdl_test.c runtime/rt.c runtime/heap.c runtime/hle.c runtime/sdl2.c runtime/sdl2_stdlib.c runtime/joblog.c runtime/proc.c \
         build/gen_all/sdl2_gen.c $(sdl2-config --libs) -o build/sdltest >"$LOG/sdltest.log" 2>&1 \
         && build/sdltest >>"$LOG/sdltest.log" 2>&1; then
     echo "sdltest: ok $(grep -c ' ok ' "$LOG/sdltest.log") checks"

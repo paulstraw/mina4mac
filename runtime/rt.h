@@ -23,6 +23,11 @@ uint32_t rt_map_pe(const char *path, uint32_t base);
 // addr >> 12, whose second-level pages are built from FN_TABLE on first use.
 GuestFn rt_lookup(uint32_t addr);
 
+// Make rt_lookup(addr) (so indirect calls to addr, not direct ones) return fn instead, and return the function it
+// replaced; NULL (and nothing changes) if there is no recompiled function at addr. For instrumentation
+// (joblog.c): call it before other threads start.
+GuestFn rt_hook(uint32_t addr, GuestFn fn);
+
 // Host functions (imports). Thunk n is the guest address THUNK_BASE + THUNK_STRIDE * n; it holds no code,
 // guest_call on it runs the host implementation registered for its dll!name. A host implementation is
 // entered like the guest function it replaces: the return address is at [esp], and it must pop it (plus

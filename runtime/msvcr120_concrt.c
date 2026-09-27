@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "host.h"
+#include "joblog.h"
 #include "sync.h"
 
 static Sync *obj(uint32_t this) { return sync_get(rd32(this)); }
@@ -91,8 +92,14 @@ HOST(msvcr120, cv_wait, "?wait@" CV "QAEXAAVcritical_section@3@@Z", 4) {  // (cr
 HOST(msvcr120, cv_wait_for, "?wait_for@" CV "QAE_NAAVcritical_section@3@I@Z", 8) {  // (cs &, ms)
     ret_i32(c, sync_wait(obj(c->ecx), &obj(ARG(0))->m, ARG(1)));
 }
-HOST(msvcr120, cv_notify_one, "?notify_one@" CV "QAEXXZ", 0) { pthread_cond_signal(&obj(c->ecx)->cv); }
-HOST(msvcr120, cv_notify_all, "?notify_all@" CV "QAEXXZ", 0) { pthread_cond_broadcast(&obj(c->ecx)->cv); }
+HOST(msvcr120, cv_notify_one, "?notify_one@" CV "QAEXXZ", 0) {
+    if (joblog_on) joblog_notify(0);
+    pthread_cond_signal(&obj(c->ecx)->cv);
+}
+HOST(msvcr120, cv_notify_all, "?notify_all@" CV "QAEXXZ", 0) {
+    if (joblog_on) joblog_notify(1);
+    pthread_cond_broadcast(&obj(c->ecx)->cv);
+}
 
 // Scheduler queries and yields.
 static uint32_t ncpu(void) { return (uint32_t)sysconf(_SC_NPROCESSORS_ONLN); }
@@ -101,7 +108,10 @@ HOST(msvcr120, num_vprocs, "?GetNumberOfVirtualProcessors@CurrentScheduler@Concu
     ret_i32(c, ncpu());
 }
 // No thread is attached to a ConcRT scheduler: the id is -1 (spin-waits then yield with msvcp _Thrd_yield).
-HOST(msvcr120, current_scheduler_id, "?_Id@_CurrentScheduler@details@Concurrency@@SAIXZ", 0) { ret_i32(c, 0xffffffff); }
+HOST(msvcr120, current_scheduler_id, "?_Id@_CurrentScheduler@details@Concurrency@@SAIXZ", 0) {
+    if (joblog_on) joblog_poll(c);
+    ret_i32(c, 0xffffffff);
+}
 HOST(msvcr120, ctx_yield, "?_Yield@_Context@details@Concurrency@@SAXXZ", 0) { sched_yield(); }
 HOST(msvcr120, underlying_yield, "?_UnderlyingYield@details@Concurrency@@YAXXZ", 0) { sched_yield(); }
 HOST(msvcr120, concrt_wait, "?wait@Concurrency@@YAXI@Z", 0) { usleep(ARG(0) * 1000); }  // (ms)

@@ -82,7 +82,9 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
 
 ### Phase 9: scheduling (no codegen changes)
 
-- [ ] Why does the main thread wait?
+- [x] Why does the main thread wait?
+  - `MINA4MAC_JOBLOG=<file>` (runtime/joblog.c, `rt_hook` wraps every std::function target) + `tools/joblog.py log --framelog frames`; results in PROFILE.md "Job system", logs in build/joblog/. Pool = 9 workers (10 CPUs − 1) + an idle second pool of 9.
+  - Main waits on the 4 chunk-update passes (0x726a5e, 8–13 ms/frame), bound by the pass's longest chunk job / total work, not wake latency (~5 µs). Main's `Sleep(0)` is a spin, holding a core, so ~13% of job time lands on E-cores (0–1), where jobs are several times slower.
   - Log the job system: how many workers the game creates, the job sizes, and how long each worker is idle vs
     busy per frame. Hook at the job wait loop (0x726a51) and the worker loop.
   - Check which cores the workers run on (`powermetrics` or per-thread CPU time vs wall time).

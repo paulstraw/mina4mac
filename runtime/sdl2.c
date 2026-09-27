@@ -13,6 +13,7 @@
 
 #include "heap.h"
 #include "hle.h"
+#include "joblog.h"
 
 // Handle block header (guest memory, just below the handle): magic, kind, host pointer.
 enum { HDR = 16, MAGIC = 0x484c4453 /* "SDLH" */ };
@@ -359,7 +360,9 @@ HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *win
     double wall = 0, cpu = 0;
     if (fd >= 0) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
     SDL_Window *w = sdl_host(ARG(0));
+    uint64_t j0 = joblog_on ? joblog_now() : 0;
     SDL_GL_SwapWindow(w);
+    if (joblog_on) joblog_frame(j0, joblog_now());
     count_frame(w);
     if (fd >= 0) {
         double after = now_ms(CLOCK_MONOTONIC_RAW);

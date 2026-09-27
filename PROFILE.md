@@ -83,3 +83,43 @@ inline-cached vcall to a 2-instruction getter would remove most of that cost.
 
 The top 20 cover 58% (flood) and 60% (heavy) of busy time. Every function in the list is part of the cell simulation, the Box2D
 terrain rebuild or tile rendering. Box2D bodies, Lua and the entity systems don't appear.
+
+## Job system (PLAN3 Phase 9)
+
+Taken 2026-09-27 with `MINA4MAC_JOBLOG=<file>` (`runtime/joblog.c`) during perfbench, summarized with
+`uv run tools/joblog.py <log> --framelog <perfbench_frames.txt>`. Logs and reports: `build/joblog/` (flood, heavy).
+The log hooks every `std::function` call on guest threads (all jobs run through one), the main thread's wait loops
+(polls of ConcRT's scheduler id), condvar waits and notifies, and records the core each job ran on
+(`pthread_cpu_number_np`; 0–1 are the E-cores, checked with a background-QoS spinner). Logging costs about 4–6%
+(flood work_ms 15.6 vs 14.8–15.0; heavy fps 33.3 vs ~35).
+
+| | flood | heavy |
+|---|---|---|
+| frame (swap to swap) | 21.0 ms | 30.0 ms |
+| main in job barriers | 8.6 ms (41%) | 14.5 ms (48%) |
+| of which the chunk-update barrier (`0x726a5e`, 4 passes/frame) | 8.1 ms | 13.2 ms |
+| per chunk pass: jobs, sum of job time, longest job | 28, 13.8 ms, 2.3 ms | 31, 27.0 ms, 3.5 ms |
+| per chunk pass: main's wait, longest job still running when it started | 2.06 ms, 1.70 ms | 3.24 ms, 2.59 ms |
+| worker utilization while main waits (9 threads) | 54% | 73% |
+| jobs per frame, median job | 372, 21 µs | 425, 46 µs |
+| workers busy | 9 × 33% | 9 × 47% |
+| job time on E-cores | 14% | 13% |
+| median job on P vs E | 17 vs 151 µs | 38 vs 252 µs |
+| chunk passes whose last job ended on an E-core | 10% | 14% |
+| wake latency (notify → worker running): median, p95 | 5, 24 µs | 6, 27 µs |
+
+- **Pool:** GetSystemInfo reports 10 CPUs. The game starts 18 `std::thread`s: a job pool of 9 (= 10 − 1) that runs
+  everything, and a second pool of 9 that runs about 1 job per frame. The main thread also runs some chunk updates
+  inline (`0x726a37`) before it waits.
+- **Why main waits:** nearly all of it is the 4 checkerboard passes of the chunk update (`F_00726a51`: submit the
+  pass's chunks, wait until `pending == 0`, next pass). The wait is set by the pass's critical path: in flood, one
+  chunk job (2.3 ms) is longer than the pass's ideal share (13.8 ms / 9 = 1.5 ms). In heavy, the pass is closer to
+  throughput-bound (27 ms / 9 = 3.0 ms vs a 3.2 ms wait). The other ~15 barrier sites per frame cost < 1 ms together.
+- **The wait is a spin:** `Sleep(0)` → `usleep(0)` returns in ~0.2 µs (42k–68k polls per frame), so main holds a
+  core the whole time it waits. With 9 workers plus the spinning main on 10 cores, the workers land on the 2 E-cores
+  for ~13% of job time, and jobs there are several times slower, so they often become the tail of a pass.
+- **Not the cause:** wake-up latency (µs, against ms-long passes), main noticing late (it sees the last job end
+  within one poll), and preemption inside jobs (thread CPU / wall 0.91–0.95).
+- So the levers are: keep workers off the E-cores (QoS, or a pool of 7 = P-cores − main), stop main's spin from
+  taking a P-core, and, most of all, shorten the chunk jobs themselves (Phases 11–12), since the passes' length is
+  the per-cell code's speed.

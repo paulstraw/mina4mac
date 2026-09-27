@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "host.h"
+#include "joblog.h"
 #include "kernel32.h"
 #include "proc.h"
 
@@ -84,6 +85,7 @@ HOST_CDECL(msvcr120, _beginthreadex) {
         exit(6);
     }
     pthread_attr_destroy(&a);
+    if (joblog_on) joblog_thread(n, t->start);
     if (ARG(5)) wr32(ARG(5), THREAD_TID(n));
     ret_i32(c, h);
 }

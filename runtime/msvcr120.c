@@ -10,6 +10,7 @@
 
 #include "heap.h"
 #include "hle.h"
+#include "joblog.h"
 #include "host.h"
 #include "kernel32.h"
 #include "proc.h"
@@ -302,7 +303,12 @@ HOST_CDECL(msvcr120, __RTtypeid) {
 }
 HOST_CDECL(msvcr120, __clean_type_info_names_internal) {}
 
-HOST_CDECL(msvcr120, __crtSleep) { usleep(ARG(0) * 1000); }  // Sleep(ms), for msvcp120's thread::sleep_*
+HOST_CDECL(msvcr120, __crtSleep) {
+    if (!joblog_on) return (void)usleep(ARG(0) * 1000);
+    uint64_t t0 = joblog_now();
+    usleep(ARG(0) * 1000);
+    joblog_sleep(t0, joblog_now());
+}  // Sleep(ms), for msvcp120's thread::sleep_*
 HOST_CDECL(msvcr120, _errno) { ret_i32(c, c->fs_base + TEB_CRT_ERRNO); }
 
 // Time.

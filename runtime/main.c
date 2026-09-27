@@ -5,12 +5,14 @@
 //   MINA4MAC_TRACE=1    log every host import call to stderr
 //   MINA4MAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
 //   MINA4MAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
+//   MINA4MAC_JOBLOG=<file>          log the job system (worker jobs, main-thread waits), see joblog.c
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "host.h"
+#include "joblog.h"
 #include "msvcr120.h"
 #include "proc.h"
 #include "rt.h"
@@ -54,6 +56,7 @@ int main(int argc, char **argv) {
     rt_thread_init(&c);
     int slots = rt_bind_imports(EXE_BASE);
     for (int i = 0; i < NDLLS; i++) slots += rt_bind_imports(DLLS[i].base);
+    joblog_init(EXE_BASE);
     crt_init(argc, argv);
     if (chdir(dir)) { perror(dir); return 2; }  // the game finds data/ etc. relative to its own directory
     if (rt_trace) fprintf(stderr, "[mina4mac] mapped %s, bound %d import slots, entry %#x\n", path, slots, entry);

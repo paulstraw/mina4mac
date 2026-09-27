@@ -105,6 +105,15 @@ GuestFn rt_lookup(uint32_t a) {
     return p[a & (PAGE_FNS - 1)];
 }
 
+GuestFn rt_hook(uint32_t a, GuestFn fn) {
+    uint32_t page = a >> PAGE_BITS;
+    GuestFn *p = __atomic_load_n(&PAGES[page], __ATOMIC_ACQUIRE);
+    if (!p) p = build_page(page);
+    GuestFn old = p[a & (PAGE_FNS - 1)];
+    if (old) p[a & (PAGE_FNS - 1)] = fn;
+    return old;
+}
+
 // Import thunks. Thunks are created while binding (single-threaded startup); a host implementation is
 // looked up in the registry on a thunk's first call and cached.
 enum { MAX_THUNKS = 1 << 16, MAX_HOST_FNS = 1 << 12 };
