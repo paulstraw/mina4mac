@@ -363,3 +363,38 @@ HOST_STDCALL(kernel32, VirtualProtect, 16) {
 }
 
 HOST_STDCALL(kernel32, FlushInstructionCache, 12) { ret_i32(c, 1); }
+
+// MultiByteToWideChar(codepage, flags, src, srclen, dst, dstlen): every code page is taken as UTF-8, as elsewhere
+// (the game converts paths it passes to CreateProcessW). srclen -1 includes the NUL. Returns the units
+// written, or needed if dstlen is 0.
+HOST_STDCALL(kernel32, MultiByteToWideChar, 24) {
+    enum { ERROR_INSUFFICIENT_BUFFER = 122, ERROR_INVALID_PARAMETER = 87 };
+    int32_t len = (int32_t)ARG(3);
+    uint32_t dst = ARG(4), cap = ARG(5);
+    if (!ARG(2) || len < -1 || len > 65536) return wr32(c->fs_base + TEB_LAST_ERROR, ERROR_INVALID_PARAMETER), ret_i32(c, 0);
+    const char *src = ARG_STR(2);
+    size_t n = len < 0 ? strlen(src) + 1 : (size_t)len;
+    char s[65537];
+    memcpy(s, src, n);
+    s[n] = 0;
+    int nul = n && !s[n - 1];
+    uint32_t units = utf8_to_utf16(s, 0, 0) - 1 + nul;  // the text before any NUL, plus the NUL if it was in range
+    if (!cap) return ret_i32(c, units);
+    if (units > cap) return wr32(c->fs_base + TEB_LAST_ERROR, ERROR_INSUFFICIENT_BUFFER), ret_i32(c, 0);
+    uint32_t tmp = heap_alloc(2 * (units + 1));
+    utf8_to_utf16(s, tmp, units + 1);
+    memcpy(P(dst), P(tmp), 2 * units);
+    heap_free(tmp);
+    ret_i32(c, units);
+}
+
+// CreateProcessW: the game only starts processes to relaunch itself (after shutting down GOG Galaxy) and in dev tools
+// (ImageMagick). Neither has a macOS equivalent, so it fails as if the program were missing.
+HOST_STDCALL(kernel32, CreateProcessW, 40) {
+    char app[4096] = "", cmd[4096] = "";
+    if (ARG(0)) utf16_to_utf8(ARG(0), app, sizeof app);
+    if (ARG(1)) utf16_to_utf8(ARG(1), cmd, sizeof cmd);
+    fprintf(stderr, "CreateProcessW(%s, %s): not supported\n", app, cmd);
+    wr32(c->fs_base + TEB_LAST_ERROR, 2);  // ERROR_FILE_NOT_FOUND
+    ret_i32(c, 0);
+}

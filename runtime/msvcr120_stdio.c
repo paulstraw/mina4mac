@@ -5,11 +5,15 @@
 // Text mode does no CR/LF translation: files are read and written as they are on disk.
 #include "msvcr120_stdio.h"
 
+#include <dirent.h>
 #include <errno.h>
+#include <fnmatch.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "heap.h"
 #include "hle.h"
@@ -291,4 +295,48 @@ HOST_CDECL(msvcr120, sprintf_s) {  // (buf, size, fmt, ...): on overflow, an emp
         r = 0xffffffffu;
     }
     ret_i32(c, r);
+}
+
+// File system.
+HOST_CDECL(msvcr120, _getcwd) {  // (buf, size): the Windows path; a NULL buf is malloc'd (at least size bytes)
+    char host[4096], win[4096];
+    if (!getcwd(host, sizeof host) || !win_path(host, win, sizeof win)) return crt_set_errno(c, ERANGE), ret_i32(c, 0);
+    uint32_t n = strlen(win) + 1, buf = ARG(0), size = ARG(1);
+    if (!buf) buf = heap_alloc(n > size ? n : size);
+    else if (n > size) return crt_set_errno(c, ERANGE), ret_i32(c, 0);
+    memcpy(P(buf), win, n);
+    ret_i32(c, buf);
+}
+
+// _findfirst64i32(pattern, _finddata64i32_t *): the first entry matching the last component (case-insensitive
+// wildcards). The game only uses it as an existence test (ModDoesFileExist) and never calls _findnext or
+// _findclose, so the handle is a dummy. _finddata64i32_t: attrib, then (8-aligned) time_create/access/write as
+// 64-bit, size at 32, name[260] at 36.
+HOST_CDECL(msvcr120, _findfirst64i32) {
+    enum { A_RDONLY = 0x1, A_SUBDIR = 0x10 };
+    char path[4096], dir[4096], name[1024] = "";
+    if (!host_path(ARG_STR(0), path, sizeof path)) return crt_set_errno(c, EINVAL), ret_i32(c, 0xffffffffu);
+    char *slash = strrchr(path, '/');
+    snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - path) : 1, slash ? path : ".");
+    const char *pat = slash ? slash + 1 : path;
+    if (!strpbrk(pat, "*?")) {
+        struct stat st;
+        if (!stat(path, &st)) snprintf(name, sizeof name, "%s", pat);
+    } else {
+        DIR *d = opendir(dir);
+        for (struct dirent *e; d && (e = readdir(d));)
+            if (!fnmatch(pat, e->d_name, FNM_CASEFOLD)) { snprintf(name, sizeof name, "%s", e->d_name); break; }
+        if (d) closedir(d);
+    }
+    struct stat st;
+    snprintf(path, sizeof path, "%s/%s", dir, name);
+    if (!*name || stat(path, &st)) return crt_set_errno(c, ENOENT), ret_i32(c, 0xffffffffu);
+    uint32_t fd = ARG(1);
+    wr32(fd, (S_ISDIR(st.st_mode) ? A_SUBDIR : 0) | (st.st_mode & S_IWUSR ? 0 : A_RDONLY));
+    wr64(fd + 8, (uint64_t)st.st_birthtimespec.tv_sec);
+    wr64(fd + 16, (uint64_t)st.st_atimespec.tv_sec);
+    wr64(fd + 24, (uint64_t)st.st_mtimespec.tv_sec);
+    wr32(fd + 32, (uint32_t)st.st_size);
+    snprintf((char *)P(fd + 36), 260, "%s", name);
+    ret_i32(c, 1);
 }

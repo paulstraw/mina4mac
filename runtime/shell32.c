@@ -1,13 +1,19 @@
 // SHELL32 and ole32 implemented natively (HLE).
 #include <errno.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "heap.h"
 #include "hle.h"
 #include "host.h"
+
+extern char **environ;
 
 enum { S_OK = 0, E_FAIL = 0x80004005, E_INVALIDARG = 0x80070057, KF_FLAG_CREATE = 0x8000 };
 enum { ERROR_SUCCESS = 0, ERROR_PATH_NOT_FOUND = 3, ERROR_FILE_EXISTS = 80, ERROR_ALREADY_EXISTS = 183 };
@@ -63,3 +69,21 @@ HOST_STDCALL(shell32, SHCreateDirectoryExW, 12) {
 }
 
 HOST_STDCALL(ole32, CoTaskMemFree, 4) { heap_free(ARG(0)); }
+
+// ShellExecuteA(hwnd, verb, file, params, dir, show): the game opens web pages (release notes, mod sites) and
+// folders with the default verb. Both go to macOS `open`; a file path is translated first. Returns a value
+// > 32 on success, SE_ERR_FNF otherwise.
+HOST_STDCALL(shell32, ShellExecuteA, 24) {
+    enum { SE_ERR_FNF = 2, SE_ERR_NOASSOC = 31, OK = 42 };
+    const char *verb = ARG_STR(1), *file = ARG_STR(2);
+    if (!file || (verb && strcasecmp(verb, "open") && strcasecmp(verb, "explore"))) return ret_i32(c, SE_ERR_NOASSOC);
+    char host[4096];
+    if (!strncasecmp(file, "http://", 7) || !strncasecmp(file, "https://", 8)) snprintf(host, sizeof host, "%s", file);
+    else if (!host_path(file, host, sizeof host) || access(host, F_OK)) return ret_i32(c, SE_ERR_FNF);
+    char *argv[] = {"open", host, NULL};
+    pid_t pid;
+    if (posix_spawnp(&pid, "open", NULL, NULL, argv, environ)) return ret_i32(c, SE_ERR_FNF);
+    int st;
+    waitpid(pid, &st, 0);
+    ret_i32(c, WIFEXITED(st) && !WEXITSTATUS(st) ? OK : SE_ERR_FNF);
+}

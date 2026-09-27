@@ -52,13 +52,15 @@ them. Every LuaJIT object lives in the guest heap, so the pointers the guest see
 | `heap.c`/`heap.h` | the guest heap allocator |
 | `proc.c`/`proc.h` | PEB, thread stacks, TEBs and static TLS |
 | `msvcr120.c`, `kernel32.c` | native (HLE) implementations of those DLLs' imports; `msvcr120.h` has `crt_init` (command line, data imports) |
-| `msvcr120_stdio.c` | FILE functions and the MSVC-style printf engine over guest varargs (`crt_vformat`) |
+| `msvcr120_stdio.c` | FILE functions, the MSVC-style printf engine over guest varargs (`crt_vformat`), `_getcwd` and `_findfirst64i32` |
 | `msvcr120_string.c`, `msvcr120_math.c`, `msvcr120_concrt.c` | mem/str/ctype/conversions/rand/locale; libm; ConcRT locks, events, condition variables |
 | `kernel32_file.c` | KERNEL32 file system: FindFirst/NextFileW, file attributes, create/delete/move/copy |
 | `thread.c` | guest threads: `_beginthreadex`/`_endthreadex`, Wait/GetExitCode/ResumeThread on thread handles |
-| `shlwapi.c`, `shell32.c` | SHLWAPI (PathAppendW); SHELL32 known folders and directory creation, ole32 CoTaskMemFree |
+| `shlwapi.c`, `shell32.c` | SHLWAPI (PathAppendW); SHELL32 known folders, directory creation and ShellExecuteA (URLs and folders go to macOS `open`), ole32 CoTaskMemFree |
 | `galaxy.c` | GOG Galaxy stubbed offline: the interface accessors return NULL, which the game checks |
 | `wininet.c` | WININET offline: `InternetOpenA` fails (ERROR_INTERNET_NAME_NOT_RESOLVED), and so does the rest |
+| `ws2_32.c` | WS2_32 offline: `WSAStartup` fails (WSASYSNOTREADY), the rest fail with WSANOTINITIALISED |
+| `user32.c` | USER32/COMDLG32: `GetActiveWindow` is NULL, `GetOpenFileNameA` is cancelled |
 | `fmod.c`, `fmod.h` | FMOD Studio/core bridged to the native macOS FMOD Engine (dlopened from `build/fmod_api/lib`, installed by `tools/setup_fmod.sh`; `NOITAMAC_AUDIO=fmod\|stub`, `NOITAMAC_FMOD=<lib dir>`): 32-bit generation-checked handles into a host table, instance handles retired on FMOD's DESTROYED callback, the game's callbacks run on FMOD's Studio thread (which gets a guest thread) with marker/beat parameters copied to the guest stack |
 | `fmod_stub.c` | the silent FMOD backend behind the same bridge (the default without the dylibs): every call succeeds, banks hold no events, only DESTROYED fires (on release) |
 | `lua51.c` | lua51.dll bridged to host LuaJIT 2.1 (`third_party/luajit`, ARM64 JIT; built into `build/luajit/` by build_all): states allocate from the guest heap, guest C functions run through a trampoline on `rt_thread_cpu`, Lua errors unwind through recompiled frames (guest state restored in cleanups), the mod sandbox's patches of the io/os/package/debug/ffi thunks disable those libraries |

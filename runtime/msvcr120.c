@@ -325,6 +325,18 @@ HOST_CDECL(msvcr120, _localtime64) {
     wr_tm(TM, &tm);
     ret_i32(c, TM);
 }
+// strftime(buf, size, fmt, tm) in the "C" locale: the game names timestamped files with "%y%m%d-%H%M%S".
+HOST_CDECL(msvcr120, strftime) {
+    uint32_t g = ARG(3);
+    struct tm t = {.tm_sec = rd32(g), .tm_min = rd32(g + 4), .tm_hour = rd32(g + 8), .tm_mday = rd32(g + 12),
+                   .tm_mon = rd32(g + 16), .tm_year = rd32(g + 20), .tm_wday = rd32(g + 24),
+                   .tm_yday = rd32(g + 28), .tm_isdst = rd32(g + 32)};
+    char out[4096];
+    size_t n = strftime(out, sizeof out, ARG_STR(2), &t);
+    if (!n || n >= ARG(1)) return ret_i32(c, 0);
+    memcpy(ARG_PTR(0), out, n + 1);
+    ret_i32(c, n);
+}
 
 // Exceptions: none are ever in flight (guest C++ exceptions aren't supported yet).
 HOST_CDECL(msvcr120, __uncaught_exception) { ret_i32(c, 0); }

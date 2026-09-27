@@ -255,6 +255,14 @@ static void initializer_imports(CPU *cp, CPU *c2) {
     CHECK("_time64 after 2020, stored", now > 1577836800 && rd64(tt) == now, 1);
     uint32_t tm = CRT("_localtime64", tt);
     CHECK("_localtime64 year", rd32(tm + 20) >= 120 && rd32(tm + 16) < 12, 1);
+    for (int i = 0; i < 9; i++) wr32(tm + 4 * i, (uint32_t[]){5, 4, 3, 2, 0, 125, 4, 1, 0}[i]);  // 2025-01-02 03:04:05
+    uint32_t tbuf = heap_calloc(1, 32);
+    CHECK("strftime", CRT("strftime", tbuf, 32, gs("%y%m%d-%H%M%S"), tm) == 13 && gstreq(tbuf, "250102-030405"), 1);
+    CHECK("strftime too small", CRT("strftime", tbuf, 13, gs("%y%m%d-%H%M%S"), tm), 0);
+    char hcwd[4096], wcwd_[4096];
+    getcwd(hcwd, sizeof hcwd), win_path(hcwd, wcwd_, sizeof wcwd_);
+    CHECK("_getcwd (Z:)", gstreq(CRT("_getcwd", 0, 0), wcwd_) && wcwd_[0] == 'Z', 1);
+    CHECK("_getcwd too small", CRT("_getcwd", tbuf, 2) == 0 && rd32(CRT("_errno")) == 34, 1);
 
     // type_info: { vftable, cached name, ".?AV..." }.
     uint32_t ti = heap_calloc(1, 64), ti2 = heap_calloc(1, 64);
@@ -385,6 +393,17 @@ static void sdl_main_imports(CPU *cp) {
     snprintf(p, sizeof p, "%s/*.none", tmp);
     win_path(p, w, sizeof w);
     CHECK("FindFirstFileW no match", K32("FindFirstFileW", gws(w), fd) == 0xffffffff && K32("GetLastError") == 2, 1);
+    snprintf(p, sizeof p, "%s/X.TX?", tmp);  // _findfirst64i32: ModDoesFileExist's existence test
+    win_path(p, w, sizeof w);
+    uint32_t ffd = heap_calloc(1, 296);
+    CHECK("_findfirst64i32 wildcard, any case", CRT("_findfirst64i32", gs(w), ffd) != 0xffffffff
+          && gstreq(ffd + 36, "x.txt") && rd32(ffd + 32) == 5 && rd32(ffd) == 0 && rd64(ffd + 24) > 1577836800, 1);
+    snprintf(p, sizeof p, "%s/d", tmp);
+    win_path(p, w, sizeof w);
+    CHECK("_findfirst64i32 dir", CRT("_findfirst64i32", gs(w), ffd) != 0xffffffff && rd32(ffd) == 0x10, 1);
+    snprintf(p, sizeof p, "%s/nope.txt", tmp);
+    win_path(p, w, sizeof w);
+    CHECK("_findfirst64i32 missing", CRT("_findfirst64i32", gs(w), ffd) == 0xffffffff && rd32(CRT("_errno")) == 2, 1);
     win_path(tmp, w, sizeof w);
     CHECK("GetFileAttributesA dir", K32("GetFileAttributesA", gs(w)), 0x10);
     snprintf(p, sizeof p, "%s/x.txt", tmp);
@@ -740,6 +759,29 @@ int main(int argc, char **argv) {
     CHECK("GetLocalTime year", rd16(lt) >= 2020 && rd16(lt + 2) >= 1 && rd16(lt + 2) <= 12, 1);
     CHECK("timeBeginPeriod", (call(&c, "WINMM.dll", "timeBeginPeriod", 1, (uint32_t[]){1}), c.eax), 0);
     CHECK("FindFirstChangeNotificationW fails", K32("FindFirstChangeNotificationW", gws("."), 0, 1), 0xffffffff);
+    uint32_t wbuf = heap_calloc(2, 16), ab2 = gs("a\xc3\xa9");  // "aé"
+    CHECK("MultiByteToWideChar size (with NUL)", K32("MultiByteToWideChar", 0, 0, ab2, -1, 0, 0), 3);
+    CHECK("MultiByteToWideChar", K32("MultiByteToWideChar", 0, 0, ab2, 4, wbuf, 16) == 3 && gwstreq(wbuf, "a\xc3\xa9"), 1);
+    CHECK("MultiByteToWideChar no NUL", K32("MultiByteToWideChar", 0, 0, ab2, 1, wbuf, 16) == 1 && rd16(wbuf + 2) == 0xe9, 1);
+    CHECK("MultiByteToWideChar small buffer", K32("MultiByteToWideChar", 0, 0, ab2, -1, wbuf, 2) == 0
+          && K32("GetLastError") == 122, 1);
+    CHECK("CreateProcessW fails", K32("CreateProcessW", gws("x.exe"), 0, 0, 0, 0, 0, 0, 0, 0, 0) == 0
+          && K32("GetLastError") == 2, 1);
+    // Offline sockets: the game's Socket::open (0x4326d0) gives up when WSAStartup fails.
+#define WS(name, ...) (call(&c, "WS2_32.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)
+    CHECK("WSAStartup fails (WSASYSNOTREADY)", WS("WSAStartup", 0x202, heap_calloc(1, 400)), 10091);
+    CHECK("socket: INVALID_SOCKET", WS("socket", 2, 1, 0) == 0xffffffff && (call(&c, "WS2_32.dll", "WSAGetLastError", 0, NULL), c.eax) == 10093, 1);
+    CHECK("gethostbyname: NULL", WS("gethostbyname", gs("irc.chat.twitch.tv")), 0);
+    CHECK("connect/send/recv fail", WS("connect", 1, 0, 16) & WS("send", 1, 0, 0, 0) & WS("recv", 1, 0, 0, 0), 0xffffffff);
+    CHECK("htons", WS("htons", 6667), 0x0b1a);
+    CHECK("WSACleanup: stdcall pops 0", call(&c, "WS2_32.dll", "WSACleanup", 0, NULL), c.esp);
+#undef WS
+    CHECK("GetActiveWindow: none", (call(&c, "USER32.dll", "GetActiveWindow", 0, NULL), c.eax), 0);
+    CHECK("GetOpenFileNameA: cancelled", (call(&c, "COMDLG32.dll", "GetOpenFileNameA", 1, (uint32_t[]){heap_calloc(1, 88)}), c.eax), 0);
+    CHECK("ShellExecuteA missing file", (call(&c, "SHELL32.dll", "ShellExecuteA", 6,
+                                               (uint32_t[]){0, 0, gs("no\\such\\file"), 0, 0, 5}), c.eax), 2);
+    CHECK("ShellExecuteA unknown verb", (call(&c, "SHELL32.dll", "ShellExecuteA", 6,
+                                               (uint32_t[]){0, gs("print"), gs("https://noitagame.com"), 0, 0, 5}), c.eax), 31);
     initializer_imports(&c, &c2);
     sdl_main_imports(&c);
     msvcp120_binding(argv[2]);

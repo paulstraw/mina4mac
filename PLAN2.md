@@ -226,10 +226,12 @@ apply. Also read the task notes of Phases 2–3 there; they describe the runtime
   - Keep `NOITAMAC_AUDIO=stub` working.
   - `runtime/fmod.c` bridges to the C API via a table (`fmod.h`, own declarations; dlopens `build/fmod_api/lib`, not `build/fmod`, which is the fmod.dll module dir); `fmod_stub.c` is now the silent backend behind the same table. `NOITAMAC_AUDIO=fmod|stub` (default: fmod if it loads), `NOITAMAC_FMOD=<lib dir>`, `NOITAMAC_AUDIO_WAV=<file>` records the mix. Handles are generation-checked table entries, retired on DESTROYED. Callbacks run on FMOD's Studio thread, which gets a guest thread and a 64 MB stack (Thread_SetAttributes).
   - All 25 banks (987 events) load in 2.01.23, and the game's 0x20105 header version is accepted. fmodtest (check.sh, 50 checks; skipped without build/fmod_api) checks the prototypes against the SDK. check.sh seed 14519 all ok. In-game: 168 events started in 70 s, no "FMOD error" logs; setParameterByName("lowpass") returns 74/30 at 0x47afdd, whose result the game ignores. The WAV capture has menu music, the click and in-game sound, but nobody has listened to it yet.
-- [ ] Stubs for the remaining imports: WININET and WS2_32 fail cleanly (offline), `GetOpenFileNameA`
+- [x] Stubs for the remaining imports: WININET and WS2_32 fail cleanly (offline), `GetOpenFileNameA`
   returns cancel, `timeBeginPeriod`, `GetActiveWindow`, `CoTaskMemFree`, and the crash-handler thread
   APIs (`SuspendThread`/`GetThreadContext`) if they're reached. Check that nothing aborts in a
   30-minute session.
+  - New `ws2_32.c` (WSAStartup → WSASYSNOTREADY; Socket::open 0x4326d0 gives up), `user32.c` (GetActiveWindow NULL, GetOpenFileNameA cancel); ShellExecuteA → macOS `open` (the Release Notes/modworkshop links, folders); `strftime`, `_getcwd`, `_findfirst64i32` (Lua `ModDoesFileExist`), MultiByteToWideChar, CreateProcessW fails (self-relaunch/ImageMagick). SuspendThread/Get/SetThreadContext/VirtualQuery/OpenProcess/K32GetProcessMemoryInfo are only in the dev profiler (MinHook, 0x80ce80, exits without WIZARD_PROFILER), and `_popen` is ffmpeg recording, so they stay unimplemented. envtest 236; check.sh seed 1144 all ok.
+  - Unattended 30-min New Game session: alive at 1800 s, SIGTERM exit 0, no unimplemented imports. The game auto-paused on focus loss somewhere after 10 min. SIGTERM skips NOITAMAC_COUNT_IMPORTS' atexit write.
 - [ ] Packaging.
   - Build a `Noita.app` that points to the user's own install.
   - Generated C is derived from the game and must not ship, so the app build runs the
