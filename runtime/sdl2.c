@@ -301,3 +301,43 @@ HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
     if (r && ARG(0)) event_to_guest(&e, ARG(0));
     ret_i32(c, r);
 }
+
+// NOITAMAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
+// time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title.
+static void count_frame(SDL_Window *w) {
+    static int on = -1, frames;
+    static uint64_t last, t0;
+    static double worst;
+    static char title[256];
+    if (on < 0) on = getenv("NOITAMAC_FPS") && strcmp(getenv("NOITAMAC_FPS"), "0");
+    if (!on) return;
+    uint64_t now = SDL_GetPerformanceCounter(), hz = SDL_GetPerformanceFrequency();
+    if (!last) {
+        last = t0 = now;
+        return;
+    }
+    double ms = (now - last) * 1000.0 / hz;
+    last = now, frames++;
+    if (ms > worst) worst = ms;
+    double span = (double)(now - t0) / hz;
+    if (span < 1) return;
+    double fps = frames / span;
+    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms\n", fps, span * 1000 / frames, worst);
+    if (w) {
+        const char *cur = SDL_GetWindowTitle(w);
+        if (!title[0] || strncmp(cur, title, strlen(title))) {  // the game's own title, before our suffix
+            const char *bar = strstr(cur, " | ");
+            snprintf(title, sizeof title, "%.*s", bar ? (int)(bar - cur) : (int)strlen(cur), cur);
+        }
+        char buf[320];
+        snprintf(buf, sizeof buf, "%s | %.0f fps, worst %.1f ms", title, fps, worst);
+        SDL_SetWindowTitle(w, buf);
+    }
+    t0 = now, frames = 0, worst = 0;
+}
+
+HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *window)
+    SDL_Window *w = sdl_host(ARG(0));
+    SDL_GL_SwapWindow(w);
+    count_frame(w);
+}
