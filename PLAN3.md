@@ -119,16 +119,33 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
   - Hot imports from the profile, for Phase 12: `call_thunk` 480M calls; `fgetc` 100M (loading), `QueryPerformanceCounter` 67M and
     `__crtSleep` 18M (wait loops, inflated by the slow run), `floor` 38M, `operator new/delete` 30M/27M, libm sqrt/sin/cos 17–21M,
     memset/memcpy 16–19M.
-- [ ] Code layout: an order file (`-Wl,-order_file`) from the profile, to cluster hot functions and cut i-cache and
+- [x] Code layout: an order file (`-Wl,-order_file`) from the profile, to cluster hot functions and cut i-cache and
   iTLB misses in the 50 MB binary. Try it with and without PGO.
   - `tools/pgo_order.py` (all 14,469 executed functions, by block-count sum; the top 1,000 are 99.7% of it), `build_all.py --order`.
   - PGO + order vs no PGO, heavy, 4 pairs (build/perfab/20260927-154039): fps +0.9%, work_ms −0.3%, cpu_ms −7.2%, cpu_p95 −5.2%.
     Main-thread CPU drops, but main mostly waits for the workers, so frame time doesn't move.
-  - Still to do: the order-only A/B (build/mina4mac.order vs build/mina4mac.nopgo, not run), then decide.
-- [ ] Try `-O3`, and ThinLTO over the chunks (build time matters: record it).
+  - Order only vs neither, heavy, 4 pairs (build/perfab/20260928-112254): fps +1.0%, work_ms −0.7% (ranges overlap), work_p95 −1.9%,
+    cpu_p95 −5.5%. Noise-level, like PGO: layout isn't the bottleneck. Both stay opt-in (`--order`); the default build uses neither.
+  - `tools/check.sh` passed on the Phase 10 commit (2026-09-28).
+- [x] Try `-O3`, and ThinLTO over the chunks (build time matters: record it).
   - Likely the more useful of the two: `build_all.py` spreads functions round-robin over 128 chunks, so a direct callee is almost
     never in its caller's chunk and can't be inlined (e.g. `GetCellPtr`, 3%). Grouping callers and callees into the same chunk is a cheaper
     alternative to try.
+  - **Kept: ThinLTO is now the default** (`build_all.py --lto thin|off`, cache in build/lto_cache/). Build 2:06 → 2:48 (compile 107 →
+    65 s, link 1 → 82 s for the three links sharing the cache), binary 51.4 → 59.6 MB. Heavy, 4 pairs vs `-O2`
+    (build/perfab/20260928-113504): fps +2.4%, work_ms −3.5%, work_p95 −4.9% (ranges don't overlap), cpu_ms −3.6%. The LTO side's
+    median repeated in the next batch (22.69 vs 22.70 ms).
+  - `-O3` (`--opt O3`) on top of ThinLTO: work_ms +1.2%, fps −0.8% (build/perfab/20260928-120549): noise, dropped. ld64 ignores `-O`
+    at link time and `-Wl,-mllvm,-O3` too (byte-identical output), so `--opt` only changes the pre-link pipeline.
+  - Contiguous chunks without LTO (`--chunking contiguous`: adjacent functions, since MSVC links a source file's functions
+    together): work_ms −4.0% but ranges overlap and work_p95 −0.7% (build/perfab/20260928-114903); the chunks are unbalanced (largest
+    32 MB of C vs 3.3 MB mean), so compile takes 256 s. Not kept; ThinLTO does the same job and is steadier. The option stays.
+  - Determinism: `tools/determinism.sh run [binary]` is now unattended (`-gamemode 0` on a fresh run, perfbench mod paused).
+    Two runs of the same `-O2` binary differ in ~50 lines at f60 and f600 (physics bodies, vines, a few liquid cells): only
+    seed/RNG/libm are exact, so `diff` now reports those exactly and the snapshot sections as counts. ThinLTO vs `-O2`: seed, RNG
+    and libm identical; f60 37–61 and f600 34–46 differing lines, the same band as `-O2` vs `-O2` (build/det/). PLAN2's
+    "identical at +60/+600" doesn't reproduce even for `-O2` now; the saved 2026-09-26 mina4mac file differs from Wine's in 335 lines
+    there, so the files kept from that check don't support it either.
 - [ ] Check whether `-fno-strict-aliasing` and `-ffp-contract=off` can be narrowed. Keep `fp-contract=off` for x87
   and SSE code (determinism), but check the ones that only guard integer code.
 

@@ -10,6 +10,9 @@ build/gen_all/. Functions the lifter can't handle yet become stubs that report g
   uv run tools/build_all.py --pgo gen    instrumented build (IR PGO): runs add to build/pgo/raw/*.profraw
   uv run tools/build_all.py --pgo use    optimize with build/pgo/mina4mac.profdata (tools/pgo.sh makes both)
   uv run tools/build_all.py --order      link with the order file build/pgo/mina4mac.order (hot functions first)
+  uv run tools/build_all.py --opt O3     optimization level (default O2)
+  uv run tools/build_all.py --lto off    no ThinLTO (default thin: cross-chunk inlining, cache in build/lto_cache/)
+  uv run tools/build_all.py --chunking contiguous   chunks of adjacent functions (default round-robin)
 
 Profiles come from the user's own game and stay in build/ (never commit them).
 """
@@ -41,6 +44,7 @@ PGO_DIR = ROOT / "build/pgo"
 PGO_RAW = PGO_DIR / "raw"  # the instrumented binary writes default_<signature>.profraw here, merging runs
 PGO_DATA = PGO_DIR / "mina4mac.profdata"
 PGO_ORDER = PGO_DIR / "mina4mac.order"
+LTO_CACHE = ROOT / "build/lto_cache"
 _prog = None
 
 
@@ -91,12 +95,12 @@ def _pgo_flags(mode):
 
 
 def _cc(job):
-    src, extra = job
+    src, extra, opt = job
     # Chunk objects sit next to their sources; runtime objects go in GEN.
     obj = (src.parent if src.name.startswith("chunk") else GEN) / (src.stem + ".o")
     sdl = _sdl_config("--cflags") if src.stem.startswith("sdl2") and src.stem != "sdl2_stdlib" else []
     lua = LUA_CFLAGS if src.name in LUA else []
-    subprocess.run(["clang", "-c", "-O2", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl, *lua, *extra,
+    subprocess.run(["clang", "-c", f"-{opt}", "-ffp-contract=off", "-fno-strict-aliasing", "-w", *sdl, *lua, *extra,
                     "-I", str(ROOT / "runtime"), "-I", str(GEN), str(src), "-o", str(obj)], check=True)
     return obj
 
@@ -106,9 +110,15 @@ def main():
     ap.add_argument("modules", nargs="*", choices=MODULES)
     ap.add_argument("--pgo", choices=("gen", "use"), help="build instrumented, or with the merged profile")
     ap.add_argument("--order", action="store_true", help=f"link with {PGO_ORDER.relative_to(ROOT)}")
+    ap.add_argument("--opt", choices=("O2", "O3"), default="O2", help="optimization level")
+    ap.add_argument("--lto", choices=("thin", "off"), default="thin",
+                    help="ThinLTO (default; LuaJIT stays a plain archive): heavy work_ms -3.5%%, build +40 s")
+    ap.add_argument("--chunking", choices=("roundrobin", "contiguous"), default="roundrobin",
+                    help="contiguous keeps neighbours (MSVC links a source file's functions together) in one chunk, so direct calls can inline")
     args = ap.parse_args()
     modules = args.modules or ["noita", "msvcp120"]
     pgo = _pgo_flags(args.pgo)
+    lto = [f"-flto={args.lto}"] if args.lto != "off" else []
     if args.order and not PGO_ORDER.exists():
         sys.exit(f"no {PGO_ORDER}: make one with tools/pgo.sh order")
     GEN.mkdir(parents=True, exist_ok=True)
@@ -128,7 +138,10 @@ def main():
         mgen.mkdir(parents=True, exist_ok=True)
         for old in mgen.glob("chunk*"):
             old.unlink()
-        chunks = [(k, ms[k::CHUNKS]) for k in range(CHUNKS)]
+        if args.chunking == "contiguous":
+            chunks = [(k, ms[k * len(ms) // CHUNKS:(k + 1) * len(ms) // CHUNKS]) for k in range(CHUNKS)]
+        else:
+            chunks = [(k, ms[k::CHUNKS]) for k in range(CHUNKS)]
         with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m,)) as pool:
             failed += sum(pool.map(_lift_chunk, chunks))
         chunk_srcs += sorted(mgen.glob("chunk*.c"))
@@ -143,12 +156,16 @@ def main():
     launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c", "gl_gen.c"]
     srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c", GEN / "gl_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
     with mp.Pool(os.cpu_count()) as pool:
-        objs = pool.map(_cc, [(s, pgo) for s in srcs])
+        objs = pool.map(_cc, [(s, pgo + lto, args.opt) for s in srcs])
     t2 = time.time()
     only = {"harness", "bench"} | {Path(n).stem for n in launcher}
     common = [str(o) for o in objs if o.stem not in only]
     exe = ROOT / "build/harness_all"
     link = ["clang", *pgo[:1]]  # the instrumented build links the profile runtime
+    if lto:  # the link does the codegen; the cache lets the 3 links share it. ld64 ignores -O here (and
+        # -Wl,-mllvm,-O3): the compile-time --opt still changes the bitcode, fp-contract/aliasing ride along in it.
+        LTO_CACHE.mkdir(parents=True, exist_ok=True)
+        link += [*lto, f"-Wl,-cache_path_lto,{LTO_CACHE}"]
     if args.order:  # the hot functions of the launcher; harness and bench just get the same layout
         link += [f"-Wl,-order_file,{PGO_ORDER}"]
     subprocess.run([*link, *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
@@ -157,7 +174,7 @@ def main():
                     str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/mina4mac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
-    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}")
+    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks")
     print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 

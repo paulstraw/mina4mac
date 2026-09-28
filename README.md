@@ -33,7 +33,9 @@ install, run the script again. Saves are in `~/Library/Application Support/mina4
 
 `PLAN.md` and `PLAN2.md` describe the design and record the history. The tools work on a copy of the game in
 `build/game`: copy the binaries there, then `tools/setup_game.sh` adds `data/` and `mods/`.
-`uv run tools/build_all.py` builds `build/mina4mac`, and `tools/check.sh` runs the verification sequence.
+`uv run tools/build_all.py` builds `build/mina4mac` with ThinLTO (about 3 minutes; `--lto off` skips it), and
+`tools/check.sh` runs the verification sequence. `tools/determinism.sh run` checks world generation against the Wine
+build without clicks.
 
 Optional profile-guided build: `tools/pgo.sh` builds an instrumented `build/mina4mac`, trains it on the perfbench
 scenes (`tools/perfbench.sh install mina4mac` first; about 10 minutes, since the instrumented game runs ~12× slower),
