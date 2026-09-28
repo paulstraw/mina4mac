@@ -25,8 +25,12 @@ typedef struct CPU {
     uint16_t fpu_sw;   // x87 condition bits C0/C2/C3 from fcom*
 } CPU;
 
-// Guest memory: a 4 GB region; guest address a lives at MEM + a.
-extern uint8_t *MEM;
+// Guest memory: a 4 GB region; guest address a lives at MEM + a. rt_init maps it at a fixed host address, so MEM is
+// a constant: as a global pointer, every guest store (char/may_alias, so it may alias the pointer) forced a reload.
+// The base is one 16 KB page off a round number on purpose: with the low 32 bits zero, clang builds each address with
+// an ORR immediate plus a separate access, instead of keeping the base in a register for [base, w, uxtw] (9% less code).
+#define MEM_HOST_BASE 0x200000004000ull
+#define MEM ((uint8_t *)MEM_HOST_BASE)
 
 typedef uint32_t __attribute__((aligned(1), may_alias)) u32u;
 typedef uint16_t __attribute__((aligned(1), may_alias)) u16u;

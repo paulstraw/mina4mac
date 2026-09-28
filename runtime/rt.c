@@ -9,11 +9,11 @@
 #include <strings.h>
 #include <sys/mman.h>
 
-uint8_t *MEM;
-
 void rt_init(void) {
-    MEM = mmap(NULL, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
-    if (MEM == MAP_FAILED) { perror("mmap"); exit(2); }
+    // A hint, not MAP_FIXED (which would silently replace whatever is there): check we got the address.
+    void *m = mmap(MEM, 1ull << 32, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (m == MAP_FAILED) { perror("mmap"); exit(2); }
+    if (m != MEM) { fprintf(stderr, "guest memory mapped at %p, not %p\n", m, (void *)MEM); exit(2); }
 }
 
 void rt_load_image(const char *path, uint32_t base) {

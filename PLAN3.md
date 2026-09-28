@@ -35,7 +35,8 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
   operations plus a store around every call, and clang can't keep values in registers across calls.
 - **x87.** The stack lives in `c->st[8]` (doubles in the `CPU` struct), not in C locals, so every x87 instruction
   is a load or store through `c`. `fpu_round` switches on the control word for every `fist`.
-- **Compiler flags.** Everything is built with `clang -O2 -ffp-contract=off -fno-strict-aliasing`, with no LTO, no
+- **Compiler flags.** (Superseded by Phase 10: ThinLTO is now the default, and guest memory sits at a fixed address.)
+  Everything is built with `clang -O2 -ffp-contract=off -fno-strict-aliasing`, with no LTO, no
   PGO and no order file. The binary is 50 MB, so i-cache and iTLB pressure is plausible.
 - **CPU topology.** `GetSystemInfo` reports `sysconf(_SC_NPROCESSORS_ONLN)`, which is 10 on this M1 Max (8 P-cores
   + 2 E-cores). Guest threads are plain `pthread_create` threads (`runtime/thread.c:79`) with no QoS class set.
@@ -146,8 +147,21 @@ already faster than the Sikarugir Wine build. This plan aims to make heavy scene
     and libm identical; f60 37–61 and f600 34–46 differing lines, the same band as `-O2` vs `-O2` (build/det/). PLAN2's
     "identical at +60/+600" doesn't reproduce even for `-O2` now; the saved 2026-09-26 mina4mac file differs from Wine's in 335 lines
     there, so the files kept from that check don't support it either.
-- [ ] Check whether `-fno-strict-aliasing` and `-ffp-contract=off` can be narrowed. Keep `fp-contract=off` for x87
+- [x] Check whether `-fno-strict-aliasing` and `-ffp-contract=off` can be narrowed. Keep `fp-contract=off` for x87
   and SSE code (determinism), but check the ones that only guard integer code.
+  - Neither flag matters, so both stay. `-fstrict-aliasing` gives byte-identical chunk code, because every guest access
+    goes through `char` or the `may_alias` typedefs in cpu.h. `-ffp-contract` only touches FP expressions: over 4 chunks, `off` and
+    `on` both give 0 FMAs (each lifted instruction is its own statement), and only `fast` fuses (5–22 per chunk, all in FP code,
+    so results would change).
+  - What the disassembly showed instead: `MEM` was a global pointer, and a `char`/`may_alias` store may alias it, so clang
+    reloaded `MEM` after **every** guest store. **Kept:** rt_init maps guest memory at a fixed host address (`MEM_HOST_BASE`
+    0x200000004000, an mmap hint, checked), and `MEM` is a constant. The base is a 16 KB page off a round number: with the low 32
+    bits zero, clang builds each address with an ORR immediate plus a separate access, not `[base, w, uxtw]`. chunk000 `__TEXT`
+    268.6 → 252.9 KB (round base) → 244.0 KB (−9.2%); binary 59.6 → 55.3 MB.
+  - Heavy, 4 pairs (build/perfab/20260928-135633): work_ms −2.0% (B faster in all 4 pairs), work_p95 −2.3% (ranges don't
+    overlap), fps +1.3%, cpu_ms +0.8% (noise). `tools/check.sh` passed. Determinism (build/det/memfix_{1,2}.txt): seed/RNG/libm
+    identical to the ThinLTO baseline; snapshot diffs f60 69–70 and f600 54 lines vs a same-binary band of 49–59 and 43–45.
+    That's slightly above the band, but those sections vary run to run (f1 21–46 even for one binary).
 
 ### Phase 11: the call boundary
 

@@ -2,7 +2,7 @@
 
 ## Guest memory map
 
-The guest address space is one 4 GB host mapping (`MEM`, `rt_init`); guest address `a` is at `MEM + a`.
+The guest address space is one 4 GB host mapping at a fixed host address (`MEM`, a constant: `MEM_HOST_BASE` in `cpu.h`, mapped by `rt_init`); guest address `a` is at `MEM + a`.
 
 | Range | What | Defined in |
 |---|---|---|
