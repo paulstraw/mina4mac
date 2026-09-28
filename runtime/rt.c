@@ -105,7 +105,16 @@ GuestFn rt_lookup(uint32_t a) {
     return p[a & (PAGE_FNS - 1)];
 }
 
+// Targets that lifted call sites call directly when the target matches (build_all.py --ic), bypassing rt_lookup.
+// build_all.py's table.c overrides these; test programs have none.
+__attribute__((weak)) const uint32_t IC_TARGETS[1];
+__attribute__((weak)) const int IC_TARGET_COUNT;
+
 GuestFn rt_hook(uint32_t a, GuestFn fn) {
+    for (int i = 0; i < IC_TARGET_COUNT; i++)
+        if (IC_TARGETS[i] == a)
+            fprintf(stderr, "rt_hook: %#x is an inline-cache target: calls from cached sites skip the hook "
+                            "(build with --ic none)\n", a);
     uint32_t page = a >> PAGE_BITS;
     GuestFn *p = __atomic_load_n(&PAGES[page], __ATOMIC_ACQUIRE);
     if (!p) p = build_page(page);
@@ -276,6 +285,41 @@ void guest_call(CPU *c, uint32_t target) {
     GuestFn f = rt_lookup(target);
     if (__builtin_expect(!f, 0)) call_thunk(c, target);
     else f(c);
+}
+
+// Indirect-call site profile (build_all.py --icprof): the lifter calls guest_call_site with the call's address.
+// Counts per (site, target) pair live in an open-addressing table; written as "site<TAB>target<TAB>calls" lines.
+enum { ICPROF_SLOTS = 1 << 20 };
+static uint64_t ICPROF_KEY[ICPROF_SLOTS], ICPROF_N[ICPROF_SLOTS];
+static const char *ICPROF_PATH;
+
+void guest_call_site(CPU *c, uint32_t target, uint32_t site) {
+    if (ICPROF_PATH) {
+        uint64_t key = (uint64_t)site << 32 | target;
+        for (uint32_t h = (uint32_t)((key * 0x9E3779B97F4A7C15ull) >> 44);; h = (h + 1) & (ICPROF_SLOTS - 1)) {
+            uint64_t k = __atomic_load_n(&ICPROF_KEY[h], __ATOMIC_ACQUIRE);
+            if (!k && __atomic_compare_exchange_n(&ICPROF_KEY[h], &k, key, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) k = key;
+            if (k == key) { __atomic_fetch_add(&ICPROF_N[h], 1, __ATOMIC_RELAXED); break; }
+        }
+    }
+    guest_call(c, target);
+}
+
+void rt_icprof_write(void) {
+    if (!ICPROF_PATH) return;
+    FILE *f = fopen(ICPROF_PATH, "w");
+    if (!f) { perror(ICPROF_PATH); return; }
+    for (int i = 0; i < ICPROF_SLOTS; i++) {
+        uint64_t k = __atomic_load_n(&ICPROF_KEY[i], __ATOMIC_ACQUIRE);
+        if (k) fprintf(f, "%#x\t%#x\t%llu\n", (uint32_t)(k >> 32), (uint32_t)k,
+                       (unsigned long long)__atomic_load_n(&ICPROF_N[i], __ATOMIC_RELAXED));
+    }
+    fclose(f);
+}
+
+void rt_icprof(const char *path) {
+    ICPROF_PATH = strdup(path);
+    atexit(rt_icprof_write);
 }
 void guest_unimpl(CPU *c, uint32_t addr, const char *what) {
     (void)c; fprintf(stderr, "unimpl %#x %s\n", addr, what); exit(3);

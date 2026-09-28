@@ -175,11 +175,31 @@ sessions. Making `tools/determinism.sh` run unattended (like perfbench with `-ga
     (eax/ecx/edx volatile; ebx/esi/edi/ebp preserved). Verify that per function by analysis, not by assumption,
     and fall back to the full sync for anything unproven (hand-written asm, `/Oy-` oddities, SEH helpers).
   - Measure the static and dynamic count of removed loads and stores first.
-- [ ] Indirect-call dispatch.
+- [x] Indirect-call dispatch.
   - Resolve known targets at lift time: vtable calls whose table is a constant in `.rdata`, and calls through IAT
     slots to recompiled modules (msvcp120 → direct `F_` calls instead of `guest_call`).
   - For the remaining hot sites, try a per-site inline cache (`if (t == last) F_last(c); else guest_call(...)`),
     measured against the failed full-inline attempt. Only the profile's top sites, not all of them.
+  - **Kept: per-site inline caches, from a profile** (2026-09-28). `build_all.py --icprof` builds a counting binary: the lifter calls
+    `guest_call_site(c, t, site)`, and `MINA4MAC_ICPROF=<file>` writes "site target calls" at exit or SIGTERM (the counting build
+    runs heavy at 9 fps, flood at 14). `tools/icache.py <profiles>` merges scenes (equal weight) and writes `tools/icache_sites.txt`:
+    the hottest sites up to 99% of calls, up to 2 targets per site with ≥5% of its calls. The default build reads it (`--ic none`
+    turns it off) and emits `if (t_ == T) F_T(c); else guest_call(c, t_);`. The file holds only exe addresses, so it's committed.
+  - The profile (build/icprof/, heavy + flood): 1.6e10 indirect calls in heavy over 21.7k sites, and they're almost all
+    monomorphic. The top 100 sites take 92% of calls and the top 1 target of each covers 88%. 388 sites reach 99%. 321 of them got caches
+    (the other 67 go to import thunks), 354 compares in all, and 98.4% of profiled calls hit a cached target. The top sites are
+    `ICell` getter vcalls in the liquid code (`F_00709960` → `F_004abfc0`, `F_005b01c0`, `F_004ac0f0`).
+  - Heavy, 4 pairs (build/perfab/20260928-143841): **work_ms 22.04 → 19.34 (−12.3%)**, work_p95 −12.0%, **fps +8.8%**
+    (36.25 → 39.45), cpu_ms −5.6%, cpu_p95 −11.3%. The ranges don't overlap. The binary stays at 55.3 MB.
+  - Unlike the reverted full `guest_call` inlining (+4 MB, −5%), only ~350 sites change, and the direct calls let ThinLTO inline
+    the 2-instruction getters.
+  - Hooks: an inline-cached site calls `F_T` directly, so `rt_hook` on a cached target is skipped from those sites. `rt_hook` prints
+    a warning for such targets (table.c's `IC_TARGETS`); for joblog runs, build with `--ic none` if it warns.
+  - Gates: `tools/check.sh` passed. Determinism (build/det/ic_1.txt) matches the Phase 10 run memfix_1 exactly on seed, RNG and libm.
+    Its snapshot diffs (f1 16, f60 47, f600 45 lines) are inside the same-binary band. Against the Wine build, libm now DIFFERS.
+    memfix_1 shows the same difference, so it predates this change. Look into it separately (did the Wine seedprint file change?).
+  - Not done: resolving targets at lift time (constant vtables, IAT → msvcp120). With 98.4% of calls already hitting a cached
+    target, the rest is <2% of calls. Checkpoint passed (≥5%), so register-sync liveness is next.
 - [ ] Return-address handling: check whether pushing the return address to guest memory is needed for every call.
   Keep it wherever the callee may read it (`[esp]` access, SEH, `_alloca` probes, `__security_check_cookie`).
 

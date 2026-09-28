@@ -13,6 +13,8 @@ build/gen_all/. Functions the lifter can't handle yet become stubs that report g
   uv run tools/build_all.py --opt O3     optimization level (default O2)
   uv run tools/build_all.py --lto off    no ThinLTO (default thin: cross-chunk inlining, cache in build/lto_cache/)
   uv run tools/build_all.py --chunking contiguous   chunks of adjacent functions (default round-robin)
+  uv run tools/build_all.py --icprof     count indirect calls per site (MINA4MAC_ICPROF=<file>; tools/icache.py)
+  uv run tools/build_all.py --ic none    no inline caches (default: the sites in tools/icache_sites.txt)
 
 Profiles come from the user's own game and stay in build/ (never commit them).
 """
@@ -45,12 +47,29 @@ PGO_RAW = PGO_DIR / "raw"  # the instrumented binary writes default_<signature>.
 PGO_DATA = PGO_DIR / "mina4mac.profdata"
 PGO_ORDER = PGO_DIR / "mina4mac.order"
 LTO_CACHE = ROOT / "build/lto_cache"
+IC_SITES = ROOT / "tools/icache_sites.txt"
 _prog = None
 
 
-def _init(module):
+def _init(module, icprof, ic_targets):
     global _prog
     _prog = Program(module)
+    _prog.ic_profile, _prog.ic_targets = icprof, ic_targets
+
+
+def _load_ic(path, starts):
+    """Inline-cache sites from tools/icache.py: "site target [target...]" lines (hex). Targets that aren't
+    recompiled functions (import thunks) are dropped."""
+    ic = {}
+    for line in Path(path).read_text().splitlines():
+        words = line.split("#")[0].split()
+        if not words:
+            continue
+        site, *ts = (int(w, 16) for w in words)
+        ts = [t for t in ts if t in starts]
+        if ts:
+            ic[site] = ts
+    return ic
 
 
 def _lift_chunk(args):
@@ -113,6 +132,10 @@ def main():
     ap.add_argument("--opt", choices=("O2", "O3"), default="O2", help="optimization level")
     ap.add_argument("--lto", choices=("thin", "off"), default="thin",
                     help="ThinLTO (default; LuaJIT stays a plain archive): heavy work_ms -3.5%%, build +40 s")
+    ap.add_argument("--icprof", action="store_true",
+                    help="count indirect calls per (site, target): run with MINA4MAC_ICPROF=<file>, then tools/icache.py")
+    ap.add_argument("--ic", default=str(IC_SITES.relative_to(ROOT)),
+                    help="inline-cache sites from tools/icache.py ('none' for plain guest_call everywhere)")
     ap.add_argument("--chunking", choices=("roundrobin", "contiguous"), default="roundrobin",
                     help="contiguous keeps neighbours (MSVC links a source file's functions together) in one chunk, so direct calls can inline")
     args = ap.parse_args()
@@ -129,6 +152,8 @@ def main():
         starts_by_mod[m] = sorted(a for a in prog.all_starts | prog.direct_calls if prog.t_lo <= a < prog.t_hi)
     starts = sorted(a for s in starts_by_mod.values() for a in s)
     assert len(starts) == len(set(starts)), "modules overlap"
+    ic_path = ROOT / args.ic
+    ic = {} if args.icprof or args.ic == "none" or not ic_path.exists() else _load_ic(ic_path, set(starts))
     (GEN / "decls.h").write_text("\n".join(f"void F_{a:08x}(CPU *restrict c);" for a in starts))
     t0 = time.time()
     failed = 0
@@ -142,13 +167,16 @@ def main():
             chunks = [(k, ms[k * len(ms) // CHUNKS:(k + 1) * len(ms) // CHUNKS]) for k in range(CHUNKS)]
         else:
             chunks = [(k, ms[k::CHUNKS]) for k in range(CHUNKS)]
-        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m,)) as pool:
+        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m, args.icprof, ic)) as pool:
             failed += sum(pool.map(_lift_chunk, chunks))
         chunk_srcs += sorted(mgen.glob("chunk*.c"))
     t1 = time.time()
     table = ['#include "rt.h"', '#include "decls.h"',
              "const FnEntry FN_TABLE[] = {" + ",".join(f"{{{a:#x}u,F_{a:08x}}}" for a in starts) + "};",
              f"const int FN_COUNT = {len(starts)};"]
+    ic_fns = sorted({t for ts in ic.values() for t in ts})  # rt_hook warns about these: cached sites bypass hooks
+    table += ["const uint32_t IC_TARGETS[] = {" + ",".join([f"{t:#x}u" for t in ic_fns] + ["0"]) + "};",
+              f"const int IC_TARGET_COUNT = {len(ic_fns)};"]
     (GEN / "table.c").write_text("\n".join(table))
     gen_sdl.generate()
     gen_gl.generate()
@@ -174,7 +202,8 @@ def main():
                     str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/mina4mac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
-    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks")
+    print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks; "
+          f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}")
     print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 

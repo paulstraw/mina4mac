@@ -28,6 +28,11 @@ GuestFn rt_lookup(uint32_t addr);
 // (joblog.c): call it before other threads start.
 GuestFn rt_hook(uint32_t addr, GuestFn fn);
 
+// Indirect-call site profile: count guest_call_site calls per (site, target) and write them to `path` at exit
+// (or at rt_icprof_write). Only a --icprof build calls guest_call_site.
+void rt_icprof(const char *path);
+void rt_icprof_write(void);
+
 // Host functions (imports). Thunk n is the guest address THUNK_BASE + THUNK_STRIDE * n; it holds no code,
 // guest_call on it runs the host implementation registered for its dll!name. A host implementation is
 // entered like the guest function it replaces: the return address is at [esp], and it must pop it (plus

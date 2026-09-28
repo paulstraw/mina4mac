@@ -72,6 +72,8 @@ class Program:
         if self.tso_mode not in ("auto", "all", "off"):
             raise ValueError(f"MINA4MAC_TSO={self.tso_mode}")
         self._ordered = None
+        self.ic_profile = False  # build_all.py --icprof: count indirect calls per site (guest_call_site)
+        self.ic_targets = {}  # build_all.py --ic: call site address -> hot target function starts, hottest first
 
     def is_ordered(self, a):
         if self.tso_mode != "auto":
@@ -247,7 +249,16 @@ class FnLifter:
         if not tail:
             self.emit(f"esp -= 4; wr32(esp, {ret_addr:#x}u);")
         self.sync_out()
-        self.emit("guest_call(c, t_); }")
+        site = self.cur.address
+        if self.p.ic_profile:
+            self.emit(f"guest_call_site(c, t_, {site:#x}u); }}")
+        else:
+            # Inline cache (build_all.py --ic): direct calls to the site's profiled hot targets, so the branch is
+            # predictable and LTO can inline small callees. Other targets (and hooks, see rt_hook) go through guest_call.
+            for t in self.p.ic_targets.get(site, ()):
+                self.emit(f"if (t_ == {t:#x}u) F_{t:08x}(c); else")
+                self.callees.add(t)
+            self.emit("guest_call(c, t_); }")
         if tail:
             self.emit("return;")
         else:

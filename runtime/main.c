@@ -5,6 +5,7 @@
 //   MINA4MAC_TRACE=1    log every host import call to stderr
 //   MINA4MAC_TRACE=a,b  only the imports whose dll!name contains a or b (e.g. SDL_SetWindow,glViewport)
 //   MINA4MAC_COUNT_IMPORTS=<file>   write per-import call counts to <file> at exit
+//   MINA4MAC_ICPROF=<file>          write indirect-call (site, target) counts at exit or SIGTERM (--icprof builds)
 //   MINA4MAC_JOBLOG=<file>          log the job system (worker jobs, main-thread waits), see joblog.c
 //   MINA4MAC_CPUS, MINA4MAC_QOS, MINA4MAC_YIELD   scheduling knobs, see sched.h
 #include <signal.h>
@@ -39,6 +40,12 @@ static void pgo_term(int sig) {
 }
 #endif
 
+static void icprof_term(int sig) {  // perfbench stops the game with SIGTERM
+    (void)sig;
+    rt_icprof_write();
+    _exit(0);
+}
+
 int main(int argc, char **argv) {
 #ifdef MINA4MAC_PGO_GEN
     signal(SIGTERM, pgo_term);
@@ -52,6 +59,11 @@ int main(int argc, char **argv) {
     if (rt_trace && strcmp(trace, "1")) rt_trace_filter = trace;
     const char *counts = getenv("MINA4MAC_COUNT_IMPORTS");
     if (counts && *counts) rt_count_imports(counts);
+    const char *icprof = getenv("MINA4MAC_ICPROF");
+    if (icprof && *icprof) {
+        rt_icprof(icprof);
+        signal(SIGTERM, icprof_term);
+    }
 
     sched_init();
     rt_init();
