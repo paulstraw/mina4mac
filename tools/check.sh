@@ -140,9 +140,10 @@ else
     echo "fmodtest: FAIL, see $LOG/fmodtest.log"; status=1
 fi
 
-# The launcher opens a window; with the display asleep it blocks in SDL_GL_SwapWindow (vsync), hence the timeout.
+# The launcher opens a window; with the display asleep (or on an unattended launch) it can block in SDL_GL_SwapWindow,
+# hence the timeout. SDL turns SIGTERM into a quit event that a stalled main loop never reads, so -k follows with SIGKILL.
 # The scripted clicks pick New Game, then the first game mode (window points of the default 1280x720 window).
-MINA4MAC_CLICKS="40:639,352;45:445,250" timeout 300 build/mina4mac >"$LOG/launcher.log" 2>&1
+MINA4MAC_CLICKS="40:639,352;45:445,250" timeout -k 10 300 build/mina4mac >"$LOG/launcher.log" 2>&1
 rc=$?
 stop=$(grep -m1 -E '^(unimplemented|unimpl|no function|guest)' "$LOG/launcher.log" || tail -1 "$LOG/launcher.log")
 echo "launcher: exit $rc, $stop"

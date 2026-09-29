@@ -92,7 +92,7 @@ run)
         open "$APP"
         pid=
         # the game process itself ("C:\GOG Games\Noita\noita.exe ..."), not wine's short-lived helper processes
-        for _ in $(seq 1 60); do pid=$(pgrep -f '^C:.*noita\.exe' | head -1); [ -n "$pid" ] && break; sleep 1; done
+        for _ in $(seq 1 60); do pid=$(pgrep -f '^C:.*noita\.exe' | head -1 || true); [ -n "$pid" ] && break; sleep 1; done
         [ -n "$pid" ] || { echo "the wrapper didn't start noita.exe"; exit 1; }
         caffeinate -d -u -w "$pid" &
         stop() {

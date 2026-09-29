@@ -287,7 +287,34 @@ rendering.
 
 ### Phase 13: wrap up
 
-- [ ] Final numbers: native vs Wine, capped and uncapped, both scenes, plus CPU time per frame. Compare to the PLAN2
+- [x] Final numbers: native vs Wine, capped and uncapped, both scenes, plus CPU time per frame. Compare to the PLAN2
   baseline and record which changes contributed and by how much.
+  - 2026-09-28, 3 rotated rounds per cell (base → now → Wine, now → Wine → base, Wine → base → now), medians (min–max).
+    **base** = `build/mina4mac.A`, the PLAN2 code with the Phase 8 benchmark hooks (5fc2dc3, before any Phase 9
+    change); **now** = HEAD (5291766); **Wine** = the Sikarugir wrapper. Wine has no frame log, so only fps and frame
+    time. Runs, logs and `summary.py`: build/final/.
+
+    | scene, mode | base fps | now fps | Wine fps | now vs base | now vs Wine | work_ms base → now (p95) | main cpu_ms base → now |
+    |---|---|---|---|---|---|---|---|
+    | heavy, capped | 34.2 (33.5–34.2) | **47.9** (47.3–48.7) | 38.6 (36.6–40.4) | +40% | +24% | 24.0 → 16.2 (33.4 → 21.4) | 23.6 → 8.4 |
+    | heavy, uncapped | 31.3 (30.1–31.3) | **42.4** (40.1–43.3) | 24.0 (22.3–24.3) | +36% | +77% | 27.4 → 21.7 (49.8 → 38.4) | 26.9 → 14.7 |
+    | flood, capped | 53.4 (53.1–53.6) | **59.8** (59.7–59.8) | 55.9 (55.8–56.3) | +12% (at the cap) | +7% | 14.7 → 10.6 (18.5 → 13.9) | 14.2 → 5.9 |
+    | flood, uncapped | 61.0 (60.8–61.6) | **86.1** (84.9–86.8) | 53.4 (52.8–53.9) | +41% | +61% | 15.5 → 10.6 (18.9 → 12.4) | 15.0 → 5.9 |
+
+  - Flood now holds vsync (59.8 of 60) with ~6 ms of headroom per frame; uncapped it runs at 86 fps. Heavy, the
+    stress scene (twice the flood + physics + TNT), is at 48 fps capped: frame work fell from 24 ms to 16 ms, still
+    just short of a 16.7 ms frame, and its p95 (21 ms) misses it. Main-thread CPU time fell by 60–65%, mostly because
+    the job wait no longer spins.
+  - Uncapped heavy is *slower* than capped for all three builds, and its last 600 frames slow down (e.g. now: 58–64
+    fps for the first 1200 frames, then 29–31), with main-thread cpu_ms p95 up to 28 ms (capped: 12). The scene is
+    frame-based, so without vsync the game itself does more main-thread work per frame late in the scene. It isn't
+    specific to the recompiler (Wine drops from 38.6 to 24.0 too). Capped is how the game is played, so it's the
+    number that matters.
+  - Contributions, from each change's own interleaved heavy A/B (work_ms median): scheduling nap (Phase 9) −4.9%,
+    ThinLTO −3.5%, fixed MEM −2.0% (Phase 10), inline caches −12.3%, register sync −18.4% (Phase 11). Compounded that
+    is −36%; the measured base → now is −33% (24.0 → 16.2). PGO, the order file, -O3, contiguous chunks, QoS, P-core
+    pools, dropping return-address stores and wide addressing were each noise and aren't in the default build.
+  - Found on the way: `tools/perfbench.sh run wine` quit at once under `set -o pipefail` (`pgrep | head` fails until
+    Wine has started noita.exe), leaving the game running unwatched; fixed with `|| true`.
 - [ ] Rebuild `build/Noita.app` (PGO profile included in the local build if Phase 10 kept it) and do a user
   playtest in a heavy scene.
