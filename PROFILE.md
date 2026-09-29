@@ -157,3 +157,30 @@ between batches (heavy 31.8–35.1 fps), so only compare A with B inside one row
 - **Sync HLE:** `runtime/sync.c` and the ConcRT condvars are plain pthread mutexes and condvars with no polling, and
   joblog measures wake latency at 5 µs median (p95 24–27 µs) against 2–3 ms passes. Nothing to fix there.
 - What remains is the passes' critical path: the chunk jobs themselves (Phases 11–12).
+
+## After Phase 11 (PLAN3 Phase 12 re-profile)
+
+Taken 2026-09-28 at commit 87e7dcb (ThinLTO, fixed MEM, inline caches, live register sync), heavy scene, 20 s:
+`build/perfprof/20260928-180220/`. The sampled run: 43.3 fps, work_ms median 17.39 (unsampled runs: ~47–48 fps,
+~16.1 ms).
+
+| bucket | main | guest threads | share | Phase 8 heavy share |
+|---|---|---|---|---|
+| lifted noita code | 0.21 | 3.53 | 88.1% | 78.6% |
+| lifted msvcp120 | 0.00 | 0.01 | 0.3% | 0.3% |
+| dispatch (`guest_call`, `call_thunk`) | 0.01 | 0.02 | 0.5% | 13.3% |
+| math HLE | 0.00 | 0.02 | 0.5% | 0.3% |
+| other HLE | 0.04 | 0.06 | 2.2% | 2.2% |
+| Lua | 0.00 | 0.00 | 0.0% | 0.0% |
+| GL bridge + driver | 0.03 | 0.00 | 0.7% | 0.7% |
+| GL swap | 0.23 | 0.00 | 5.5% | 2.8% |
+| FMOD | – | – | 2.0% | 1.7% |
+| total busy | | | 4.24 cores | 4.95 cores |
+
+- Dispatch is gone as a bucket. Busy cores fell (4.95 → 4.24) because the same work takes less CPU. The 9 workers are
+  ~40% busy each, and the main thread is 52% busy (swap 23%, guest 21%).
+- Top self time: `F_0070a520` 14.3% (liquid flow step), `F_00709960` 9.9%, `F_00722cd0` 5.9% (RenderTiles),
+  `F_0070d020` 4.4%, `F_0070ae40` 4.2%, `F_007288a0` 4.1%, `F_0070b360` 3.7%, `F_00861e00` 3.5%, `F_00708dd0` 3.3%,
+  `F_00708d00` 2.6%. The getters (`F_004ac0f0`, `F_0089a100`, `F_00899f00`, `F_00729ae0`) have left the list: ThinLTO
+  inlines them into their callers through the inline caches and direct calls, so their cost now counts there.
+- These functions contain almost no x87 (3 of ~6,000 instructions) and no `rep movs/stos`. Float math is scalar SSE.

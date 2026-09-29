@@ -251,14 +251,39 @@ sessions. Making `tools/determinism.sh` run unattended (like perfbench with `-ga
 
 ### Phase 12: hot-spot specific
 
-- [ ] x87 in locals. Lift x87 stack slots as C `double` locals within a function (TOP known statically in most
+Re-profile first (2026-09-28, commit 87e7dcb, heavy, `build/perfprof/20260928-180220/`, PROFILE.md "After Phase 11"):
+lifted noita code is 88% of busy samples, dispatch fell from 13% to 0.5%, and the old tiny getters (`F_004ac0f0`,
+`GetCellPtr`) no longer appear on their own: ThinLTO inlines them through the inline caches and direct calls. The top
+22 functions by self time (72% of busy time) are still the cell simulation, the Box2D terrain rebuild and tile
+rendering.
+
+- [x] x87 in locals. Lift x87 stack slots as C `double` locals within a function (TOP known statically in most
   blocks), and sync to `c->st` only at calls and at blocks with unknown TOP. Cache the rounding mode per function
   when no `fldcw` is in it. Only if the profile shows x87-heavy functions near the top.
-- [ ] SSE/memcpy paths: check that hot `memcpy`/`memset` (msvcr120 HLE) and `rep movs` lifting use the host
+  - **Not done: the profile rules it out.** Of the ~6,000 instructions in the top 22 functions, 3 are x87 (all in
+    `F_007288a0`, outside its cell loop). The hot float math is scalar SSE (`movss`/`mulss`/`comiss`), which the lifter
+    already keeps in `c->xmm` and clang handles well.
+- [x] SSE/memcpy paths: check that hot `memcpy`/`memset` (msvcr120 HLE) and `rep movs` lifting use the host
   libc/NEON paths.
-- [ ] Bridge overhead: Lua (`runtime/lua51.c`) and GL (`runtime/opengl32.c`) calls per frame, and the cost per
+  - **Nothing to do:** no `rep movs`/`rep stos` in the top 22 functions, and `memset` is 0.0% of busy samples,
+    `memcpy` too small to list. All HLE together (math included) is 2.7%.
+- [x] Bridge overhead: Lua (`runtime/lua51.c`) and GL (`runtime/opengl32.c`) calls per frame, and the cost per
   call. Batch or shortcut the hot ones (for example, stop re-checking the current context on every GL call).
+  - **Nothing to do in the benchmark scenes:** Lua 0.0%, GL outside the swap 0.7% of busy samples. The swap itself
+    (5.5%, 23% of the main thread) is the driver waiting for vsync/present, not bridge code.
 - [ ] Whatever the Phase 8 profile puts on top that the tasks above don't cover.
+  - That is the lifted cell-simulation code itself. Its ARM64 (lldb on `F_00709960`, `F_0070a520`) has no leftover
+    flag work; the costs are structural: guest stack and arguments in guest memory, the return-address store,
+    register syncs at the calls that remain, and an `add` + `ldr [MEM, w, uxtw]` pair for every `[reg+disp]` access.
+  - **Tried: wide addressing (not kept).** A throwaway `MINA4MAC_ADDR=wide` lifter mode emitted `[reg+disp]` as
+    `MEM + (uint64)reg + (int64)disp` (unsafe: it drops 32-bit wraparound; a safe version would map aliases of guest
+    memory below and above the 4 GB region), so clang could fold displacements into loads and share `MEM+reg` across
+    the fields of one object. It folded where it could, but pushes and `esp` math stay 32-bit, and `F_0070a520` went
+    from 3,582 to 3,612 instructions. Heavy, 4 pairs (build/perfab/20260928-181150): work_ms −0.7% (ranges overlap),
+    work_p95 −2.3%, fps +1.3%, cpu_ms −2.8%: noise, so reverted.
+  - What's left needs larger lifter work: keeping a function's own stack slots (`[ebp-k]`, `[esp+k]` that don't
+    escape) in C locals, and passing arguments to known direct callees in registers. Both need an escape analysis
+    over frames (like regsum.py's, but for memory), and a check mode, as for register sync.
 
 ### Phase 13: wrap up
 
