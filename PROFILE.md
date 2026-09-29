@@ -184,3 +184,52 @@ Taken 2026-09-28 at commit 87e7dcb (ThinLTO, fixed MEM, inline caches, live regi
   `F_00708d00` 2.6%. The getters (`F_004ac0f0`, `F_0089a100`, `F_00899f00`, `F_00729ae0`) have left the list: ThinLTO
   inlines them into their callers through the inline caches and direct calls, so their cost now counts there.
 - These functions contain almost no x87 (3 of ~6,000 instructions) and no `rep movs/stos`. Float math is scalar SSE.
+
+## Jungle (PLAN4 Phase 15)
+
+Taken 2026-09-28 at 931a724, `SCENE=jungle DELAY=15 SECS=30 tools/perfprof.sh` (the sample covers the slow second
+half of the scene, frames ~900–2000): `build/perfprof/20260928-224207/`. The sampled run: 41.9 fps, work_ms 20.1
+(unsampled: ~43–45 fps, 17–19 ms).
+
+| bucket | main | guest threads (18) | share |
+|---|---|---|---|
+| lifted noita code | 0.35 | 1.18 | 69.3% |
+| HLE | 0.15 | 0.06 | 9.4% |
+| GL swap | 0.15 | – | 6.7% |
+| FMOD | – | – | 5.9% |
+| GL bridge + driver | 0.09 | – | 4.2% |
+| dispatch / math HLE | 0.02 / 0.01 | 0.02 / 0.03 | 1.7% / 1.7% |
+| Lua | 0.01 | 0.00 | 0.4% |
+| total busy | 0.79 | | 2.22 cores |
+
+Unlike flood and heavy, the job workers are mostly idle (the 9 cell-sim workers ~11% busy, the second pool of 9
+~4%), and **the main thread is the bottleneck: 79% busy**. Its busy time (100%):
+
+- World update, `DeathMatch[3]` (`F_006b26c0`) 62%:
+  - Component systems (`F_0057a4c0`) 41%. Of that, `PhysicsBodySystem` (`F_00c608a0`) 15.6%, nearly all of it a
+    **spin-wait for Box2D**: `F_00bd82c0` (physicsbody updator) loops `while (world->m_flags & e_locked || …)
+    { Platform::Sleep(0.0); if (GetTime() - t0 > limit) log "Locked at: " }`. `Platform::GetTime` (`F_00dd9f30`,
+    PlatformWin vtable slot 27, a QueryPerformanceCounter wrapper) is why `mach_absolute_time` shows up as 13.4% of
+    main's busy time, filed under HLE. `PhysicsBody2System` and `PlayerCollisionSystem` have the same loop (~2.4%
+    more). The other systems are a long tail (particle emitters 3.3%, sprite stains 2.4%, damage models 1.7%, …;
+    none above 3.5%).
+  - `F_006f04a0` → `F_00718e10` 17.8%: the main thread's part of the world/cell update (`F_007174b0` 7.4%,
+    `F_00724a90` 4.0%).
+- Render, `DeathMatch[4]` (`F_006b3ae0`) 16.5%, two-thirds of it in GL calls (`glDrawArrays` 5.4%).
+- GL swap 19%.
+- Waiting (not in the 100%): 21% of the thread's samples.
+
+**Box2D's step runs on the second job pool** (`F_009a26d0` → `F_009beb10`, b2World::Step with its own QPC timers;
+`F_009bdb40` has "Box2D - endless loop was broken"). One thread at a time runs it, for 31% of the wall time: about
+9 ms of a ~29 ms sampled frame. Main waits for it about 4 ms a frame. So the frame's critical path is main's own
+work plus the tail of the single-threaded physics step.
+
+- **Box2D is double-precision scalar SSE**, and the lifter keeps XMM registers in `c->xmm[]`. clang doesn't promote
+  them: `F_009b2ec0` compiles every `mulsd` to `ldr d; fmul; str d` on the CPU struct (build/asm_9b2ec0.txt), since
+  guest-memory stores through the fixed `MEM` address may alias it. 85% of Box2D's self time is in functions with
+  ≥20% XMM instructions; main thread 31% (+10% with 5–20%); cell-sim workers 12% (their hot code is integer).
+  This is the XMM analogue of PLAN3's register sync (GPRs in locals, −18% heavy).
+- **Scheduling**: `MINA4MAC_QOS=interactive` (runtime/sched.c, off since PLAN3 Phase 9 found nothing on heavy)
+  gives jungle work_ms **−8.2%** (18.1 → 16.6, fps +4.7%, p95 −10.6%, ranges disjoint, build/perfab_jungle_qos.log).
+  The single-thread critical path (Box2D, main) is what an E-core hurts most.
+- Ruled out by this profile: the Lua bridge (0.4%), dispatch/uncached indirect calls (1.7% in all; call_thunk 1.7%).

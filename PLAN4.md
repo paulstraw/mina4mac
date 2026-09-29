@@ -122,9 +122,21 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
 
 ### Phase 15: find the cost
 
-- [ ] Profile the jungle scene with `tools/perfprof.sh` (`SCENE=jungle`) and put it next to PROFILE.md's heavy
+- [x] Profile the jungle scene with `tools/perfprof.sh` (`SCENE=jungle`) and put it next to PROFILE.md's heavy
   profile: buckets per thread (main vs job workers), top guest functions by self and inclusive time, and what the
   main thread does between swaps. Name the top 20 functions with `tools/fninfo.py`, as in PLAN3 Phase 8.
+  - 2026-09-28, PROFILE.md "Jungle": `build/perfprof/20260928-224207/` (30 s over the slow second half). **The main
+    thread is the bottleneck** (79% busy; the 18 workers 4–11% each). Its busy time: component systems 41% (of which
+    15.6% is PhysicsBodySystem *spin-waiting* for Box2D's step, polling `Platform::GetTime`, hence
+    `mach_absolute_time` at 13% of main as "HLE"), main's part of the world update 18%, render 16.5% (2/3 GL
+    calls), swap 19%. The rest of the systems is a long tail (none above 3.5%).
+  - Box2D's `b2World::Step` runs on the second job pool, one thread at a time, ~31% of wall time (~9 ms of a sampled
+    frame); main waits ~4 ms a frame for it. Box2D is double-precision scalar SSE, and the lifter keeps XMM in
+    `c->xmm[]`, which clang loads and stores around every SSE op (build/asm_9b2ec0.txt). XMM-dense functions (≥20%)
+    are 85% of Box2D's self time and ~31% of main's.
+  - `MINA4MAC_QOS=interactive`: jungle work_ms −8.2% (18.1 → 16.6, fps 44.0 → 46.0, disjoint ranges), heavy +0.4%
+    (noise; 48.2 vs 48.1 fps). build/perfab_{jungle,heavy}_qos.log.
+  - Lua is 0.4% of busy samples and dispatch 1.7%, so the next two tasks have little to find (see Phase 16).
 - [ ] Count what the benchmarks didn't: Lua bridge calls and guest callbacks per frame (a counter build or a
   `MINA4MAC_*` knob in `runtime/lua51.c`), and the cost per call. Entities alive per frame, from the mod.
 - [ ] Indirect calls in the jungle: run the `--icprof` counting build on the jungle scene and compare with the
@@ -134,6 +146,16 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
 
 The order below is a guess. Re-rank it from Phase 15 before starting, and drop any task the profile doesn't support.
 
+Re-ranked 2026-09-28 from the jungle profile (PROFILE.md "Jungle"): first the two new tasks below, then the vcall
+summaries and stack slots (both lifted-code speed, which is still most of main's time). Inline caches and the Lua
+bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap check after the others.
+
+- [ ] QoS user-interactive by default (`runtime/sched.c`): measured jungle −8.2% work_ms, heavy neutral. Confirm
+  flood holds 60, then flip the default and keep the knob.
+- [ ] XMM registers in C locals, like PLAN3's GPR register sync: load the XMM registers a function uses at entry,
+  keep them in locals, store dirty ones before calls/returns/exits and reload after calls. MSVC's x86 convention
+  treats all XMM as volatile, but check for LTCG custom conventions passing values in XMM (a `--sync check`-style
+  mode). Target: Box2D's step (the tail main spin-waits on) and main's SSE code. A/B on jungle and heavy.
 - [ ] Inline caches for all three scenes: merge the jungle profile into `tools/icache_sites.txt` (`tools/icache.py`
   already merges scenes with equal weight) and A/B on jungle *and* heavy, so the new sites don't cost the old scenes.
 - [ ] Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in
