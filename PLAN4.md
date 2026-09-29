@@ -94,10 +94,29 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
     runs stay comparable.
   - Check it: the fps per 300 frames should sit clearly below 60 (the playtest dipped to 38–57). If it doesn't, make
     it busier before going on; a scene that doesn't reproduce the dip can't measure a fix.
-- [ ] Wine comparison: 3 rotated runs each of the current build and the Sikarugir Wine build, capped (as in PLAN3
+- [x] Wine comparison: 3 rotated runs each of the current build and the Sikarugir Wine build, capped (as in PLAN3
   Phase 13). This answers "is it us or the game". If Wine is as slow or slower, the target is still 60, but the
   work is ordinary optimization, not a recompiler-specific gap.
-- [ ] Playtest telemetry: make it cheap to locate the next report. Either the fps line also carries the biome and
+  - 2026-09-28, SCENE=jungle, capped, rounds now → Wine, Wine → now, now → Wine. **now** = build/mina4mac at 158493f
+    (copied to build/jungle_wine/now); **Wine** = the Sikarugir wrapper (perfbench now installed there too). Both
+    reached `$biome_rainforest` in every run. Runs, logs and `run.sh`: build/jungle_wine/.
+
+    | build | fps, median (min–max) | fps per 300 frames (median run) | last 300 frames | work_ms (p95) | main cpu_ms |
+    |---|---|---|---|---|---|
+    | now | **43.3** (42.7–45.6) | 58.3 57.1 47.0 38.2 37.7 33.5 | 38.4 (33.5–40.0) | 19.1 (24.4), 17.6–19.2 | 16.5, 15.1–16.6 |
+    | Wine | 29.3 (29.2–29.8) | 35.5 33.5 29.1 27.9 29.4 23.3 | 23.3 (22.5–28.0) | – | – |
+
+  - **It's the game, not us.** Native is +48% over Wine here, twice the heavy scene's gap (+24%). Wine never gets
+    near 60 even in the first window (35–37 fps, native 58–59), so the jungle is simply a heavier scene. The
+    recompiler doesn't lose more here than elsewhere; it gains more. What's left is ordinary optimization toward 60.
+  - Both builds slow down the same way as enemies pile up (entities 580–720, enemies 117–139 within 1024 px at the
+    end, similar for both).
+  - Main-thread cpu_ms is 86% of work_ms (heavy capped: 8.4 of 16.2, 52%), so the main thread's own work, not the
+    job wait, is where the frame goes. Phase 15 should start from the main thread's profile.
+  - The scene's first two runs (45.2 and 43.6 fps, work_ms 16.6 / 18.0) fall inside this batch's range, so the
+    scene is repeatable to about ±4% fps; compare fixes only inside one interleaved batch, as before.
+- [ ] Playtest telemetry (moved after Phase 15 on 2026-09-28: the profile decides what comes next; this only has
+  to be done before the next playtest): make it cheap to locate the next report. Either the fps line also carries the biome and
   entity count (from a tiny always-on mod writing to a file, or from guest state), or a separate `--telemetry`
   packaging option. Keep it off the hot path (once a second).
 
