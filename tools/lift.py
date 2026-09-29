@@ -1013,7 +1013,8 @@ class FnLifter:
                 code = count + [f"c->{r}={r};" for r in regs] + [f"c->xmm[{n}]=x{n};" for n in xs]
                 self.lines[k] = "  " + " ".join(code) if code else "  ;"
             else:
-                s = summaries.get(ln[1]) if ln[1] is not None else None
+                # ln[1] is None after guest_call on a non-IAT indirect call: regsum.INDIRECT (the calling convention)
+                s = summaries.get(ln[1]) if ln[1] is not None else (regsum.INDIRECT if summaries else None)
                 code = []
                 if s is None or s == regsum.BOTTOM:
                     regs = GPR

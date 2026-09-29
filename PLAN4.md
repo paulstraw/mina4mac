@@ -200,8 +200,38 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
 - [ ] Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in
   `call_guest` callbacks, check that LuaJIT's JIT is on for the game's scripts and isn't aborting traces on the
   bridge's C functions.
-- [ ] Register summaries for vcall targets: where an inline cache or a constant vtable names the target, use its
+- [x] Register summaries for vcall targets: where an inline cache or a constant vtable names the target, use its
   regsum summary, so a vcall stops reloading ebx/esi/edi/ebp. Verify with `build_all.py --sync check` on all scenes.
+  - 2026-09-29, re-profile first (PROFILE.md "Jungle after XMM in locals", `build/perfprof/20260929-094221/`): the
+    Box2D spin-wait is gone (PhysicsBodySystem 15.6% → 3.4% of main's busy time, `mach_absolute_time` 13.4% → 2.3%).
+    Main's work is now a flat tail of lifted code (systems 30%, none above 4%; cell update 19.5%; render 14%), plus
+    swap 30% (capped, mostly waiting for the next vsync). Dispatch 1.3%, Lua 0.3%. So the general lifted-code items
+    are what's left, and this one first.
+  - Inline-cached branches already reload by their target's summary (PLAN3), so the task was the `guest_call`
+    fallback and regsum's own analysis, where an indirect call made ebx/esi/edi/ebp unknown. That also weakened the
+    summary of every function that calls a vcall without saving those registers itself, and so its callers' reloads.
+  - A whole-program proof doesn't go through: regsum proves all four preserved for only 70% of the 83k address-taken
+    functions (78% if indirect calls preserved them), and most failures are precision (e.g. static initializers whose
+    `atexit` chain it can't see into), not real violations. So it's the calling convention instead:
+    `regsum.INDIRECT`, used for non-IAT indirect calls in regsum and in the lifter's reload. MSVC only gives a
+    function a custom (LTCG) convention when it sees all its call sites, so an address-taken function preserves
+    ebx/esi/edi/ebp; host thunks and msvcp120 exports do too, and the EH runtime (funclets with a borrowed ebp) is
+    host code. `MINA4MAC_VCALL=unknown` at build time restores the old behaviour.
+  - `build_all.py --sync check` build (checks at 85k of the 100k `guest_call` sites): jungle, heavy and flood all ran
+    to the end without a sync failure (build/vcall/check_*.txt).
+  - Summaries: preserving 4/4 64,648 → 68,136 functions, pops known 68,285 → 72,737. Reloads per call return 5.74 →
+    4.98 (−13%); binary 62.8 → 61.4 MB.
+  - A/B (build/vcall/, build/perfab/20260929-09*, -10*), A = 05643cd:
+
+    | scene | pairs | fps A → B | work_ms A → B | main cpu_ms |
+    |---|---|---|---|---|
+    | heavy | 3 | 47.2 → 49.0 (+3.8%) | 16.28 → 15.73 (−3.4%, ranges overlap) | −5.3%, ranges disjoint |
+    | jungle | 3 + 4 | 46.4 → 48.0, then 46.9 → 45.8 | 16.45 → 16.64 over all 7 (noise) | 13.97 → 14.38 (noise) |
+
+    Jungle's run-to-run spread (±5%) is larger than the effect. Kept anyway: heavy's main thread gains clearly, the
+    change is a few lines, it removes code, and the check build found no violation.
+  - check.sh ok (seed 9483; the launcher step hit the known agent-launch stall). Determinism not rerun: the change
+    only skips reloads, and the check build compares every skipped one at run time.
 - [ ] Main-thread parallelism, if the main thread is the bottleneck while the job workers idle: check whether the
   game has work it could hand to its job system that the recompiled build serializes (a scheduling or HLE effect,
   as in PLAN3 Phase 9), not changes to the game's own design.

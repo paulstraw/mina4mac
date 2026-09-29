@@ -23,6 +23,7 @@ Assumptions, as in any recompiler of compiler-generated code:
   uv run tools/regsum.py [module]    print summary statistics (and write the cache build/<module>/regsum.pkl)
 """
 import hashlib
+import os
 import pickle
 import re
 import sys
@@ -102,6 +103,7 @@ def cache_key(module, extern):
         h.update(p.read_bytes())
     h.update(str((build_dir(module) / "discover.pkl").stat().st_mtime_ns).encode())
     h.update(repr(sorted((k, sorted(v[0]), v[1]) for k, v in extern.items())).encode())
+    h.update(VCALL_MODE.encode())
     return h.hexdigest()
 
 
@@ -238,6 +240,17 @@ def _combine(s, t):
 
 
 UNKNOWN = (frozenset(), None)
+# What an indirect call (vcall, function pointer; not an IAT slot) preserves. MINA4MAC_VCALL=abi (default): ebx/esi/edi/
+# ebp, by the calling convention. MSVC only gives a function a custom (LTCG) convention when it sees all its call
+# sites, so a function whose address is taken follows cdecl/stdcall/thiscall, and so do host thunks and the recompiled
+# msvcp120 exports guest_call can reach (the EH runtime that calls funclets with a borrowed ebp is host code). The
+# whole-program proof doesn't go through (regsum can't prove it for ~22% of address-taken functions, mostly through
+# CRT helpers it can't see into), so this is an assumption like the ones above; `build_all.py --sync check` verifies
+# it at run time. MINA4MAC_VCALL=unknown: indirect calls preserve nothing (the PLAN3 behaviour).
+VCALL_MODE = os.environ.get("MINA4MAC_VCALL", "abi")
+if VCALL_MODE not in ("abi", "unknown"):
+    raise ValueError(f"MINA4MAC_VCALL={VCALL_MODE}")
+INDIRECT = (frozenset(SAVED), None) if VCALL_MODE == "abi" else UNKNOWN
 
 
 ANY = "any"  # required(): no requirement (no return is reachable)
@@ -385,7 +398,7 @@ def analyze(fn, summaries, limit=200):
                 if v is not None and v[0] == "S":
                     _kill_range(slots, v[1] + disp, size)
             elif kind == "call":
-                s = summaries.get(op[1], UNKNOWN) if op[1] is not None else UNKNOWN
+                s = summaries.get(op[1], UNKNOWN) if op[1] is not None else INDIRECT
                 if s == BOTTOM:
                     live = False
                     break
@@ -411,7 +424,7 @@ def analyze(fn, summaries, limit=200):
                 if kind == "ret":
                     s = (kept, op[1] if ok else None)
                 elif op[1] is None:
-                    s = UNKNOWN
+                    s = (kept & INDIRECT[0], None)
                 else:
                     t = summaries.get(op[1], UNKNOWN)
                     s = BOTTOM if t == BOTTOM else (kept & t[0], t[1] if ok else None)

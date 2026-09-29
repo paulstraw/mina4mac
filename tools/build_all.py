@@ -17,6 +17,7 @@ build/gen_all/. Functions the lifter can't handle yet become stubs that report g
                                          and register syncs (<file>.sync)
   uv run tools/build_all.py --ic none    no inline caches (default: the sites in tools/icache_sites.txt)
   uv run tools/build_all.py --sync full|dirty|check   register sync around calls (default live: tools/regsum.py summaries)
+  MINA4MAC_VCALL=unknown uv run tools/build_all.py    indirect calls preserve no registers (default abi: ebx/esi/edi/ebp)
 
 Profiles come from the user's own game and stay in build/ (never commit them).
 """
@@ -252,7 +253,7 @@ def main():
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks; "
-          f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}; sync {args.sync}: "
+          f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}; sync {args.sync} (MINA4MAC_VCALL={regsum.VCALL_MODE}): "
           f"{sync[1] / max(sync[0], 1):.2f} stores/call site, {sync[3] / max(sync[2], 1):.2f} reloads/return (of 8)")
     print(f"regsum {tsum - t0:.0f}s, lift {t1 - tsum:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")

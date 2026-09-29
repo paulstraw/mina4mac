@@ -234,3 +234,32 @@ work plus the tail of the single-threaded physics step.
   gives jungle work_ms **−8.2%** (18.1 → 16.6, fps +4.7%, p95 −10.6%, ranges disjoint, build/perfab_jungle_qos.log).
   The single-thread critical path (Box2D, main) is what an E-core hurts most.
 - Ruled out by this profile: the Lua bridge (0.4%), dispatch/uncached indirect calls (1.7% in all; call_thunk 1.7%).
+
+## Jungle after XMM in locals (PLAN4 Phase 16 re-profile)
+
+Taken 2026-09-29 at 05643cd, same settings as above: `build/perfprof/20260929-094221/`. The sampled run: 46.8 fps,
+work_ms 16.6 (fps per 300 frames 58.6 58.0 50.4 41.6 39.9 40.0). A regsum experiment (~3 cores for 85 s) overlapped
+part of the sample, so treat shares as ±a few points.
+
+| bucket | main | guest threads (18) | share | before (Phase 15) |
+|---|---|---|---|---|
+| lifted noita code | 0.37 | 0.93 | 64.3% | 69.3% |
+| HLE | 0.08 | 0.06 | 6.8% | 9.4% |
+| GL swap | 0.25 | – | 12.4% | 6.7% |
+| GL bridge + driver | 0.09 | – | 4.8% | 4.2% |
+| dispatch / math HLE | 0.01 / 0.02 | 0.01 / 0.02 | 1.3% / 1.8% | 1.7% / 1.7% |
+| Lua | 0.01 | 0.00 | 0.3% | 0.4% |
+| total busy | 0.84 | | 2.02 cores | 2.22 cores |
+
+Main thread, % of its busy samples (scratch script over perfprof.parse; before → after):
+
+- **The Box2D spin-wait is gone**: `PhysicsBodySystem` (`F_00c608a0`) 15.6% → 3.4%, `mach_absolute_time` 13.4% →
+  2.3%. Box2D's step (`F_009beb10`) is 9.8% of all busy samples (was ~31% of wall time on one thread), so it now
+  finishes before main gets there.
+- World update (`F_006b26c0`) 62% → 53%: component systems 41% → 30%, now a flat tail (the top system is
+  `F_00c72920` at 4.1%, then `PhysicsBodySystem` 3.4%, none of the rest above 2%); main's part of the cell update
+  (`F_006f04a0`) 17.8% → 19.5%.
+- Render (`F_006b3ae0`) 16.5% → 14.3%. Swap 19% → 30%: capped, a frame that misses a vsync waits in the swap, so this
+  is mostly waiting that `sample` sees as busy.
+- So main's own work is a long tail of ordinary lifted code with no single subsystem left to target. What's left in
+  Phase 16 is lifted-code speed across the board (vcall reloads, stack slots) and main-thread parallelism.
