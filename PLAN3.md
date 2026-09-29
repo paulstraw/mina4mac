@@ -271,7 +271,8 @@ rendering.
   call. Batch or shortcut the hot ones (for example, stop re-checking the current context on every GL call).
   - **Nothing to do in the benchmark scenes:** Lua 0.0%, GL outside the swap 0.7% of busy samples. The swap itself
     (5.5%, 23% of the main thread) is the driver waiting for vsync/present, not bridge code.
-- [ ] Whatever the Phase 8 profile puts on top that the tasks above don't cover.
+- [x] Whatever the Phase 8 profile puts on top that the tasks above don't cover. (Closed 2026-09-28: the remaining
+  structural work moved to PLAN4.md Phase 16.)
   - That is the lifted cell-simulation code itself. Its ARM64 (lldb on `F_00709960`, `F_0070a520`) has no leftover
     flag work; the costs are structural: guest stack and arguments in guest memory, the return-address store,
     register syncs at the calls that remain, and an `add` + `ldr [MEM, w, uxtw]` pair for every `[reg+disp]` access.
@@ -316,11 +317,12 @@ rendering.
     pools, dropping return-address stores and wide addressing were each noise and aren't in the default build.
   - Found on the way: `tools/perfbench.sh run wine` quit at once under `set -o pipefail` (`pgrep | head` fails until
     Wine has started noita.exe), leaving the game running unwatched; fixed with `|| true`.
-- [ ] Rebuild `build/Noita.app` (PGO profile included in the local build if Phase 10 kept it) and do a user
+- [x] Rebuild `build/Noita.app` (PGO profile included in the local build if Phase 10 kept it) and do a user
   playtest in a heavy scene.
   - 2026-09-28: `tools/package_app.sh --no-build --fps` (new `--fps`: MINA4MAC_FPS=1 in the launcher, so fps is in the
     window title and ~/Library/Logs/mina4mac.log). The user played a ~22-minute run: "really fantastic perf until jungle,
     where it just tanked (~40fps)". The log: median 60 fps in every minute of the run; the first 20 minutes have only
     isolated slow seconds (worst 23 fps once, at minute 4). The jungle shows up as two ~15-second dips, at 20:24 (42–57 fps) and
     21:40 (38–52 fps), each recovering to 60. No log line names the biome, so what's heavy there (cell sim, creatures,
-    Lua, plants) is still unknown: neither benchmark scene covers it.
+    Lua, plants) is still unknown: neither benchmark scene covers it. The user added "a fair amount of mobs and general
+    chaos". Closed here; finding and fixing the jungle dip is `PLAN4.md`.
