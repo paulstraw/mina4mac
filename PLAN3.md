@@ -235,8 +235,19 @@ sessions. Making `tools/determinism.sh` run unattended (like perfbench with `-ga
     memfix_1 shows the same difference, so it predates this change. Look into it separately (did the Wine seedprint file change?).
   - Not done: resolving targets at lift time (constant vtables, IAT → msvcp120). With 98.4% of calls already hitting a cached
     target, the rest is <2% of calls. Checkpoint passed (≥5%), so register-sync liveness is next.
-- [ ] Return-address handling: check whether pushing the return address to guest memory is needed for every call.
+- [x] Return-address handling: check whether pushing the return address to guest memory is needed for every call.
   Keep it wherever the callee may read it (`[esp]` access, SEH, `_alloca` probes, `__security_check_cookie`).
+  - **Not kept (2026-09-28): even the unsafe upper bound is noise.** The lifted `ret` never reads the slot (`esp += 4+N;
+    return;`), and the runtime reads return addresses only for diagnostics (import trace, "unimplemented import" message,
+    joblog wait sites, `_setjmp3`'s Eip, `longjmp`'s message). Guest code that reads the slot as data (`__SEH_prolog4`/`__EH_prolog3`
+    copying it for their own `ret`, `_chkstk`) would only need the store if the copy were used as data.
+  - Upper bound first: a throwaway `MINA4MAC_RETADDR=none` build kept `esp -= 4` and dropped every `wr32(esp, ret)`. That's
+    unsafe in general, but both scenes ran through. Binary 61.3 → 56.4 MB.
+    Heavy, 4 pairs (build/perfab/20260928-174455): work_ms −2.0% (ranges overlap; B faster in 3 of 4 pairs), fps +1.7%,
+    work_p95 −1.1%, cpu_ms −4.7%. Flood, 4 pairs (build/perfab/20260928-175155): work_ms −0.4%, fps 0.0%, cpu_ms +0.8%, all noise.
+  - A safe version (a regsum-style "may read entry slot 0" fact per function, through tail jumps and callers' frames, plus
+    a `--ret check` poison build) would get less than that bound. On M1 a store to a hot stack line is nearly free next to
+    the call itself, so the experiment was reverted. Revisit only if a later profile shows call-heavy code store-bound.
 
 ### Phase 12: hot-spot specific
 
