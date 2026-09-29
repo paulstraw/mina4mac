@@ -4,15 +4,23 @@
 # msvcp120.dll, then wraps build/mina4mac in an app bundle that runs the game from that install (it copies
 # no game files; binaries and data/ are read in place, and logger.txt is written there, as on Windows).
 # Saves live under ~/Library/Application Support/mina4mac/. The launcher log goes to ~/Library/Logs/mina4mac.log.
-# Usage: tools/package_app.sh [--no-build] [install dir]
+# Usage: tools/package_app.sh [--no-build] [--fps] [install dir]
 #   install: $NOITA_SRC, default the Sikarugir Wine prefix's GOG install (as tools/setup_game.sh)
 #   output: $MINA4MAC_APP, default build/Noita.app (gitignored; copy it anywhere, e.g. ~/Applications)
 #   --no-build: reuse the existing build/mina4mac (it must have been built from the same exe)
+#   --fps: the app shows fps and the worst frame time in the window title (MINA4MAC_FPS=1; not in fullscreen)
 # Bundles Homebrew's SDL2 and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-BUILD=1
-if [ "${1:-}" = --no-build ]; then BUILD=0; shift; fi
+BUILD=1 FPS=
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --no-build) BUILD=0 ;;
+    --fps) FPS='export MINA4MAC_FPS="${MINA4MAC_FPS:-1}"' ;;
+    *) break ;;
+    esac
+    shift
+done
 SRC=${1:-${NOITA_SRC:-"$HOME/Applications/Noita Sikarugir.app/Contents/SharedSupport/prefix/drive_c/GOG Games/Noita"}}
 APP=${MINA4MAC_APP:-build/Noita.app}
 
@@ -76,6 +84,7 @@ if [ ! -f "\$NOITA_DIR/noita.exe" ]; then
     exit 1
 fi
 [ -f "\$C/Frameworks/libfmodstudio.dylib" ] && export MINA4MAC_FMOD="\${MINA4MAC_FMOD:-\$C/Frameworks}"
+$FPS
 mkdir -p "\$HOME/Library/Logs"
 exec /usr/bin/caffeinate -d -u "\$C/MacOS/mina4mac" "\$@" >"\$HOME/Library/Logs/mina4mac.log" 2>&1
 EOF

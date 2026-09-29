@@ -318,3 +318,9 @@ rendering.
     Wine has started noita.exe), leaving the game running unwatched; fixed with `|| true`.
 - [ ] Rebuild `build/Noita.app` (PGO profile included in the local build if Phase 10 kept it) and do a user
   playtest in a heavy scene.
+  - 2026-09-28: `tools/package_app.sh --no-build --fps` (new `--fps`: MINA4MAC_FPS=1 in the launcher, so fps is in the
+    window title and ~/Library/Logs/mina4mac.log). The user played a ~22-minute run: "really fantastic perf until jungle,
+    where it just tanked (~40fps)". The log: median 60 fps in every minute of the run; the first 20 minutes have only
+    isolated slow seconds (worst 23 fps once, at minute 4). The jungle shows up as two ~15-second dips, at 20:24 (42–57 fps) and
+    21:40 (38–52 fps), each recovering to 60. No log line names the biome, so what's heavy there (cell sim, creatures,
+    Lua, plants) is still unknown: neither benchmark scene covers it.
