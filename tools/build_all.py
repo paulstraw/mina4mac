@@ -17,6 +17,8 @@ build/gen_all/. Functions the lifter can't handle yet become stubs that report g
                                          and register syncs (<file>.sync)
   uv run tools/build_all.py --ic none    no inline caches (default: the sites in tools/icache_sites.txt)
   uv run tools/build_all.py --sync full|dirty|check   register sync around calls (default live: tools/regsum.py summaries)
+  uv run tools/build_all.py --slots on|check   stack slots in C locals (tools/slots.py; default off: no measured gain);
+                                         check verifies each slot access's address and value at run time (exit 13)
   MINA4MAC_VCALL=unknown uv run tools/build_all.py    indirect calls preserve no registers (default abi: ebx/esi/edi/ebp)
 
 Profiles come from the user's own game and stay in build/ (never commit them).
@@ -32,6 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 import regsum  # noqa: E402
+import slots  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
 import gen_gl  # noqa: E402
 import gen_sdl  # noqa: E402
@@ -55,11 +58,12 @@ IC_SITES = ROOT / "tools/icache_sites.txt"
 _prog = None
 
 
-def _init(module, icprof, ic_targets, sync="live", summaries=None):
+def _init(module, icprof, ic_targets, sync="live", summaries=None, slot_plans=None, slot_mode="on"):
     global _prog
     _prog = Program(module)
-    _prog.ic_profile, _prog.ic_targets, _prog.sync_mode = icprof, ic_targets, sync
+    _prog.ic_profile, _prog.ic_targets, _prog.sync_mode, _prog.slot_mode = icprof, ic_targets, sync, slot_mode
     _prog.summaries = summaries or {}
+    _prog.slot_plans = slot_plans or {}
 
 
 def _facts_chunk(addrs):
@@ -77,10 +81,11 @@ def _module_starts(prog):
     return sorted(a for a in prog.all_starts | prog.direct_calls if prog.t_lo <= a < prog.t_hi)
 
 
-def regsum_for(module):
-    """Register-preservation summaries for `module` (tools/regsum.py), from the cache or computed and cached."""
-    s = regsum.load(module)
-    if s is None:
+def regsum_for(module, with_slots=False):
+    """Register-preservation summaries for `module` (tools/regsum.py) and, with_slots, its stack-slot plans
+    (tools/slots.py), from the cache or computed and cached."""
+    s, plans = regsum.load(module), regsum.load_slots(module)
+    if s is None or (with_slots and plans is None):
         starts = _module_starts(Program(module))
         with mp.Pool(os.cpu_count(), initializer=_init, initargs=(module, False, {}, "full")) as pool:
             facts = {}
@@ -88,8 +93,13 @@ def regsum_for(module):
                 facts.update(f)
         extern = regsum.extern_summaries(module)
         s = regsum.solve(facts, extern)
-        regsum.save(module, s, extern)
-    return s
+        plans = None
+        if with_slots:
+            plans, why = slots.solve(facts, s, slots.load_site_targets())
+            print(f"{module}: stack slots in {len(plans):,} functions ({sum(sum(isinstance(k, int) for k in p) for p in plans.values()):,} accesses); "
+                  f"none in {', '.join(f'{v:,} {k}' for k, v in sorted(why.items(), key=lambda kv: -kv[1]))}")
+        regsum.save(module, s, extern, plans)
+    return s, plans or {}
 
 
 def _load_ic(path, starts):
@@ -176,6 +186,9 @@ def main():
                     help="inline-cache sites from tools/icache.py ('none' for plain guest_call everywhere)")
     ap.add_argument("--chunking", choices=("roundrobin", "contiguous"), default="roundrobin",
                     help="contiguous keeps neighbours (MSVC links a source file's functions together) in one chunk, so direct calls can inline")
+    ap.add_argument("--slots", choices=("on", "off", "check"), default=os.environ.get("MINA4MAC_SLOTS", "off"),
+                    help="stack slots in C locals (tools/slots.py; needs --sync live or check): check verifies them at run "
+                         "time (exit 13 on a wrong plan)")
     ap.add_argument("--sync", choices=("live", "dirty", "full", "check"), default="live",
                     help="full: store and reload all 8 GPRs at every call; dirty: store only assigned ones; "
                          "live: also skip reloads callee summaries prove unneeded (tools/regsum.py); check: live's code, but "
@@ -203,7 +216,7 @@ def main():
     gen_sdl.generate()  # the bridges' HOST declarations give regsum the imports' stack pops
     gen_gl.generate()
     # msvcp120 first: noita's summaries use its exports'
-    summaries = {m: regsum_for(m) if args.sync in ("live", "check") else {} for m in sorted(modules, key=lambda m: m != "msvcp120")}
+    sums = {m: regsum_for(m, args.slots != "off") if args.sync in ("live", "check") else ({}, {}) for m in sorted(modules, key=lambda m: m != "msvcp120")}
     tsum = time.time()
     failed = 0
     sync = [0, 0, 0, 0]
@@ -217,7 +230,7 @@ def main():
             chunks = [(k, ms[k * len(ms) // CHUNKS:(k + 1) * len(ms) // CHUNKS]) for k in range(CHUNKS)]
         else:
             chunks = [(k, ms[k::CHUNKS]) for k in range(CHUNKS)]
-        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m, args.icprof, ic, args.sync, summaries[m])) as pool:
+        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m, args.icprof, ic, args.sync, *sums[m], args.slots)) as pool:
             for f, st in pool.map(_lift_chunk, chunks):
                 failed += f
                 sync = [x + y for x, y in zip(sync, st)]
@@ -254,7 +267,8 @@ def main():
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks; "
           f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}; sync {args.sync} (MINA4MAC_VCALL={regsum.VCALL_MODE}): "
-          f"{sync[1] / max(sync[0], 1):.2f} stores/call site, {sync[3] / max(sync[2], 1):.2f} reloads/return (of 8)")
+          f"{sync[1] / max(sync[0], 1):.2f} stores/call site, {sync[3] / max(sync[2], 1):.2f} reloads/return (of 8); "
+          f"slots {args.slots} ({sum(sum(isinstance(k, int) for k in p) for _, plans in sums.values() for p in plans.values()):,} accesses)")
     print(f"regsum {tsum - t0:.0f}s, lift {t1 - tsum:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 

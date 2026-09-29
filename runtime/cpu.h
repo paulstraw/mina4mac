@@ -168,3 +168,18 @@ void guest_call_site(CPU *c, uint32_t target, uint32_t site);  // guest_call, co
 void sync_count(uint32_t reload, uint32_t n);
 void sync_fail(uint32_t site, const char *reg, uint32_t actual, uint32_t expected);  // --sync check: a callee summary was wrong  // --icprof builds: a register sync of n stores (reload 0) or reloads
 void guest_unimpl(CPU *c, uint32_t addr, const char *what);
+// MINA4MAC_SLOTS=check builds (tools/slots.py): a read of a stack slot kept in a local checks it against memory.
+void slot_fail(uint32_t site, uint32_t addr, uint32_t actual, uint32_t expected);
+void slot_where(uint32_t site, uint32_t addr, uint32_t planned);
+static inline void slot_at(uint32_t a, uint32_t planned, uint32_t site) {  // the access is where the plan put it
+    if (a != planned) slot_where(site, a, planned);
+}
+#define SLOT_CHK(n, T) \
+    static inline T slot_chk##n(T v, uint32_t a, uint32_t site) { \
+        T m = rd##n(a); \
+        if (m != v) slot_fail(site, a, m, v); \
+        return v; \
+    }
+SLOT_CHK(8, uint8_t)
+SLOT_CHK(16, uint16_t)
+SLOT_CHK(32, uint32_t)

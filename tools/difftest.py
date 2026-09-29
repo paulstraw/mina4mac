@@ -203,6 +203,7 @@ def main():
     ap.add_argument("--only", type=lambda s: int(s, 16))
     ap.add_argument("--x87", action="store_true", help="only functions whose own body uses x87")
     ap.add_argument("--sse", action="store_true", help="only functions whose own body uses XMM registers")
+    ap.add_argument("--slots", action="store_true", help="only functions with stack slots in locals (tools/slots.py)")
     ap.add_argument("--all", action="store_true", help="use the whole-program build (indirect calls allowed)")
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -211,10 +212,12 @@ def main():
     if args.only:
         cands, total = [(args.only, closure(ok, [args.only]))], 1
     else:
-        if args.x87 or args.sse:
+        if args.x87 or args.sse or args.slots:
             uses = (lambda m, o: m.startswith("f")) if args.x87 else (lambda m, o: "xmm" in o)
-            ok_sel = {a: v for a, v in ok.items()
-                      if any(uses(*prog.insns[x][1:]) for x in prog.function_body(a))}
+            prog.slot_mode = "on" if args.slots else prog.slot_mode  # before slot_plans loads them
+            plans = prog.slot_plans
+            ok_sel = {a: v for a, v in ok.items() if (a in plans if args.slots else
+                      any(uses(*prog.insns[x][1:]) for x in prog.function_body(a)))}
             pool, _ = pick_candidates(ok, 10**9, rng, args.all)
             pool = [(a, cl) for a, cl in pool if a in ok_sel]
             cands, total = pool[:args.funcs], len(pool)

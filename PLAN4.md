@@ -279,9 +279,47 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
       meaningful for busy passes like heavy's.
   - So the rest of Phase 16 is lifted-code speed on main: stack slots (next). The Lua bridge task stays dropped
     (0.3% of busy samples).
-- [ ] Carried over from PLAN3 Phase 12: stack slots and arguments in C locals (a per-frame escape analysis like
+- [x] Carried over from PLAN3 Phase 12: stack slots and arguments in C locals (a per-frame escape analysis like
   regsum.py's, plus a check mode). The largest and riskiest item: only if the profile shows the lifted code's memory
   traffic, not a specific subsystem, as the cost.
+  - 2026-09-29, **built, verified, no measurable gain: kept opt-in** (`build_all.py --slots on|check`, default off).
+    Stack accesses (`[esp/ebp+k]`, no index) are ~13% of the hot functions' x86 instructions (profile-weighted,
+    jungle main and workers alike), push/pop another ~14%.
+  - `tools/slots.py`: a per-function frame analysis over regsum's facts plus new per-instruction frame facts
+    (`insn_frame`: memory operands, whether the lifter accesses them only through `rd`/`wr`, register reads).
+    "Store-through" promotion: a slot's reads come from a C local, writes go to the local *and* memory, so every
+    other reader (callees reading pushed args, x87/SSE loads, partial reads) stays correct, and only a write that
+    bypasses the local can make it stale. Frame addresses are tracked through all registers (entry esp + k, or
+    aligned esp + k after one `and esp, -N`); an escape taints the frame from the escaped address up; writes that
+    bypass rd/wr (push, x87/SSE stores, other shapes) pin their bytes; unknown-offset frame accesses give up on the
+    function. Not escapes: /GS cookies (`xor eax, esp`) and EH registration (`mov fs:[0], eax`: guest C++ exceptions
+    aren't supported, so nothing walks the chain; revisit if they ever are). Callees follow the calling convention
+    (ebp preserved, pops = the `ret n` immediate) unless structurally a frame helper (`__SEH_prolog4`, `__chkstk`...);
+    indirect calls' pops come from a target observed at the site (`tools/icall_targets.txt`, 10.3k sites from the
+    three `--icprof` profiles: all targets of one site pop the same amount); otherwise esp is recovered from a later
+    `ret` or a joining path. A must-availability pass loads each slot on its first read per path, so unused paths
+    pay nothing.
+  - Coverage stayed low: 22k functions get slots (50k accesses, 17.7k plans with a single access), but only ~8% of
+    the jungle main thread's and ~20% of the workers' profile-weighted stack accesses. The rest are in aligned
+    frames (SSE code) where esp is lost after a vcall no profile saw (its pops need its argument count), and in
+    functions with real escapes (stack objects passed by pointer) below their hot slots. Where it applies, clang
+    already forwards many stack reloads by itself (`F_00861e90`: 35 accesses routed, identical asm); in `F_0070a520`
+    loads went 922 → 833 but stores 669 → 697 (spills).
+  - Correctness: `difftest.py --all --slots` (new) 719 pass, 0 fail; a `--slots check` build (verifies each routed
+    access's address against the plan and its local against memory, exit 13) ran jungle, heavy and flood to the end
+    with no failure (build/slots/check_*).
+  - A/B, A = 33d23c8, B = slots on (build/slots/, perfab logs there):
+
+    | scene | pairs | fps A → B | work_ms | main cpu_ms |
+    |---|---|---|---|---|
+    | heavy | 3 | 49.2 → 48.1 (−2.2%, ranges overlap) | +2.4% | −1.2% |
+    | jungle | 4 | 46.8 → 47.4 (+1.3%, ranges overlap) | −2.0% | −2.7% |
+
+    Noise both ways, and the regsum step takes ~100 s longer with plans, so the default build stays as before.
+    More coverage would need unsafe guesses (a vcall's pops from the pushes before it, which nested calls break)
+    for what this measurement bounds at a few percent at most. Phase 16 is done.
+  - check.sh ok (seed 21023, default build: slots off; the launcher ran its 300 s into a world). The default build
+    is the same size as A, 89 bytes differ (link metadata).
 
 ### Phase 17: wrap up
 

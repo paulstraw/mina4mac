@@ -87,6 +87,24 @@ class Program:
         if self.sync_mode not in ("full", "dirty", "live", "check"):
             raise ValueError(f"MINA4MAC_SYNC={self.sync_mode}")
         self._summaries = None
+        # Stack slots in locals (tools/slots.py, needs "live" or "check" sync; opt-in, PLAN4 Phase 16 found no gain):
+        # MINA4MAC_SLOTS=off (default), on, or check (also verify each slot access's address and value at run time).
+        self.slot_mode = os.environ.get("MINA4MAC_SLOTS", "off")
+        if self.slot_mode not in ("on", "off", "check"):
+            raise ValueError(f"MINA4MAC_SLOTS={self.slot_mode}")
+        self._slot_plans = None
+
+    @property
+    def slot_plans(self):
+        if self._slot_plans is None:
+            import regsum
+            use = self.sync_mode in ("live", "check") and self.slot_mode != "off"
+            self._slot_plans = (regsum.load_slots(self.module) if use else None) or {}
+        return self._slot_plans
+
+    @slot_plans.setter
+    def slot_plans(self, p):
+        self._slot_plans = p
 
     @property
     def summaries(self):
@@ -153,6 +171,12 @@ class FnLifter:
         self.labels = set()
         self.import_slots = set()  # IAT slots called or jumped through
         self.xmm_used = set()  # XMM registers the function names; they live in locals x0..x7
+        # Stack slots in locals (tools/slots.py): {insn address: (base, offset, size)} for the accesses a plan routes
+        # through a slot local. Lifting records which instructions access memory only through rd/wr (rw_insns) and
+        # which through other paths (x_insns: x87, SSE, locked ops...), for the plan's facts.
+        self.slot_plan = {}
+        self.rw_insns, self.x_insns = set(), set()
+        self._in_rw = False
 
     # ---- operands -------------------------------------------------------------------------
     def reg_name(self, r):
@@ -168,6 +192,8 @@ class FnLifter:
         if mem.disp or not parts:
             parts.append(f"{mem.disp & 0xffffffff:#x}u")
         e = "+".join(parts)
+        if not self._in_rw:
+            self.x_insns.add(self.cur.address)
         if mem.segment == x86.X86_REG_FS:
             e = f"c->fs_base+{e}"
         elif mem.segment not in (0, x86.X86_REG_DS, x86.X86_REG_SS, x86.X86_REG_ES):
@@ -191,7 +217,15 @@ class FnLifter:
         if op.type == x86.X86_OP_IMM:
             return f"({UT[size]}){op.imm & ((1 << (8 * size)) - 1):#x}u"
         if op.type == x86.X86_OP_MEM:
-            return f"{RD[size]}{self.order(op, '_acq')}({self.addr(op.mem)})"
+            a = self.rw_addr(op)
+            slot = self.slot_for(op, size, False)
+            if slot:
+                if self.cur.address in self.slot_plan["loads"]:  # the first access on some path: load it
+                    slot = f"({slot} = {RD[size]}({a}))"
+                if self.p.slot_mode == "check":
+                    return f"(slot_at({a}, {self.slot_home(op)}, {self.cur.address:#x}u), slot_chk{8 * size}({slot}, {a}, {self.cur.address:#x}u))"
+                return slot
+            return f"{RD[size]}{self.order(op, '_acq')}({a})"
         raise Unsupported("operand")
 
     def wr(self, op, val, size=None):
@@ -209,9 +243,42 @@ class FnLifter:
             else:
                 raise Unsupported(f"reg {n}")
         elif op.type == x86.X86_OP_MEM:
-            self.emit(f"{WR[size]}{self.order(op, '_rel')}({self.addr(op.mem)}, ({UT[size]})({val}));")
+            a = self.rw_addr(op)
+            slot = self.slot_for(op, size, True)
+            if slot:  # store-through: memory stays current for everything that reads the frame another way
+                if self.p.slot_mode == "check":
+                    self.emit(f"slot_at({a}, {self.slot_home(op)}, {self.cur.address:#x}u);")
+                self.emit(f"{slot} = ({UT[size]})({val}); {WR[size]}({a}, {slot});")
+            else:
+                self.emit(f"{WR[size]}{self.order(op, '_rel')}({a}, ({UT[size]})({val}));")
         else:
             raise Unsupported("write operand")
+
+    def rw_addr(self, op):
+        """The address of a memory operand rd/wr access (noted in rw_insns for tools/slots.py)."""
+        self.rw_insns.add(self.cur.address)
+        self._in_rw = True
+        try:
+            return self.addr(op.mem)
+        finally:
+            self._in_rw = False
+
+    def slot_for(self, op, size, write):
+        """The slot local this access goes through (tools/slots.py plan), or None. A read of another size reads memory
+        (store-through keeps it current); a write must update the local, so a size the plan didn't see is an error."""
+        sl = self.slot_plan.get(self.cur.address)
+        if sl is None:
+            return None
+        if sl[2] != size or op.size != size:
+            if write:
+                raise Unsupported(f"slot plan size {sl[2]} != write size {size}")
+            return None
+        return slot_name(sl)
+
+    def slot_home(self, op):
+        """--slots check: where the plan says this access's slot is (entry esp e0_ or aligned esp a0_, plus offset)."""
+        base, o, _ = self.slot_plan[self.cur.address]
+        return f"(uint32_t)({'e0_' if base == 'S' else 'a0_'} + {o & 0xffffffff:#x}u)"
 
     def order(self, op, suffix):
         """`suffix` if this access needs x86 ordering (Program.is_ordered), else "". esp/ebp-based
@@ -898,6 +965,8 @@ class FnLifter:
         """C for the function. With facts=True, also returns its abstract ops for tools/regsum.py."""
         body = self.p.function_body(self.start)
         self.body_set = set(body)
+        if not facts and self.p.slot_mode != "off":
+            self.slot_plan = self.p.slot_plans.get(self.start, {})
         self.callees = set()
         out = []
         prev_falls_to = None
@@ -911,6 +980,8 @@ class FnLifter:
             self.lines.append(f"L_{a:08x}: ;  // {i.mnemonic} {i.op_str}")
             try:
                 self.lift_insn(i)
+                if self.p.slot_mode == "check" and a == self.slot_plan.get("align", (None,))[0]:
+                    self.emit("a0_ = esp;")  # the aligned frame's base, for slot_at
             except Unsupported as e:
                 raise Unsupported(f"{a:#x} {i.mnemonic} {i.op_str}: {e}")
             m = i.mnemonic
@@ -938,9 +1009,11 @@ class FnLifter:
         fn_facts = None
         if facts:
             import regsum
+            import slots
             fn_facts = {"entry": self.start, "insns": {
                 a: (regsum.insn_ops(self, decoded[a], [ln for ln in self.lines[ranges[a][0]:ranges[a][1]] if isinstance(ln, str)],
-                                    tail_end if a == body[-1] else None), tuple(succs[a])) for a in body}}
+                                    tail_end if a == body[-1] else None), tuple(succs[a])) for a in body},
+                "frame": {a: slots.insn_frame(self, decoded[a]) for a in body}}
         self.finish_syncs(ranges, succs)
         self.labels.add(self.start)
         # Drop labels nobody jumps to.
@@ -965,6 +1038,11 @@ class FnLifter:
                "  uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)cf; (void)zf; (void)sf; (void)of; (void)pf;"]
         if self.xmm_used:
             out.append("  Xmm " + ", ".join(f"x{n}=c->xmm[{n}]" for n in sorted(self.xmm_used)) + ";")
+        # Stack slots in locals (tools/slots.py), loaded by the first read on each path (plan["loads"]).
+        for sl in sorted({v for k, v in self.slot_plan.items() if isinstance(k, int)}):
+            out.append(f"  {UT[sl[2]]} {slot_name(sl)};")
+        if self.slot_plan and self.p.slot_mode == "check":
+            out.append("  uint32_t e0_ = esp, a0_ = 0; (void)e0_; (void)a0_;")
         return out
 
     def finish_syncs(self, ranges=None, succs=None, mode=None):
@@ -1031,6 +1109,11 @@ class FnLifter:
                 count = [f"sync_count(1, {len(regs)});"] if self.p.ic_profile else []
                 self.lines[k] = "  " + " ".join(count + code + [f"{r}=c->{r};" for r in regs]
                                                 + [f"x{n}=c->xmm[{n}];" for n in sorted(self.xmm_used)])
+
+
+def slot_name(slot):
+    base, o, size = slot
+    return f"{base.lower()}{size}_{'m' if o < 0 else 'p'}{abs(o):x}"
 
 
 def x86_reg_op(lifter, name, size):

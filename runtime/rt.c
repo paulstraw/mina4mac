@@ -326,6 +326,17 @@ void sync_fail(uint32_t site, const char *reg, uint32_t actual, uint32_t expecte
     exit(12);
 }
 
+void slot_fail(uint32_t site, uint32_t addr, uint32_t actual, uint32_t expected) {
+    fprintf(stderr, "slot check: at %#x, the stack slot at %#x holds %#x in memory but %#x in its local\n", site, addr,
+            actual, expected);
+    exit(13);
+}
+
+void slot_where(uint32_t site, uint32_t addr, uint32_t planned) {
+    fprintf(stderr, "slot check: at %#x, the access is at %#x but the plan put its slot at %#x\n", site, addr, planned);
+    exit(13);
+}
+
 void rt_icprof_write(void) {
     if (!ICPROF_PATH) return;
     char sp[1024];

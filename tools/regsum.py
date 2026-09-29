@@ -99,11 +99,13 @@ def extern_summaries(module):
 def cache_key(module, extern):
     """Summaries depend on the lifter, this file, the discovered code and the import summaries."""
     h = hashlib.sha256()
-    for p in (Path(__file__), Path(__file__).with_name("lift.py")):
+    for p in (Path(__file__), Path(__file__).with_name("lift.py"), Path(__file__).with_name("slots.py")):
         h.update(p.read_bytes())
     h.update(str((build_dir(module) / "discover.pkl").stat().st_mtime_ns).encode())
     h.update(repr(sorted((k, sorted(v[0]), v[1]) for k, v in extern.items())).encode())
     h.update(VCALL_MODE.encode())
+    targets = Path(__file__).with_name("icall_targets.txt")  # tools/slots.py's indirect call sites
+    h.update(targets.read_bytes() if targets.exists() else b"")
     return h.hexdigest()
 
 
@@ -111,17 +113,27 @@ def cache_path(module):
     return build_dir(module) / "regsum.pkl"
 
 
-def load(module):
-    """Cached summaries for `module` (imports included), or None if missing or stale (build_all.py writes them)."""
+def _load(module, what):
     p = cache_path(module)
     if not p.exists():
         return None
     d = pickle.load(open(p, "rb"))
-    return d["summaries"] if d.get("key") == cache_key(module, extern_summaries(module)) else None
+    return d.get(what) if d.get("key") == cache_key(module, extern_summaries(module)) else None
 
 
-def save(module, summaries, extern):
-    pickle.dump({"key": cache_key(module, extern), "summaries": summaries}, open(cache_path(module), "wb"))
+def load(module):
+    """Cached summaries for `module` (imports included), or None if missing or stale (build_all.py writes them)."""
+    return _load(module, "summaries")
+
+
+def load_slots(module):
+    """Cached stack-slot plans (tools/slots.py) for `module`, or None if missing, stale or not computed."""
+    return _load(module, "slots")
+
+
+def save(module, summaries, extern, slot_plans=None):
+    pickle.dump({"key": cache_key(module, extern), "summaries": summaries, "slots": slot_plans},
+                open(cache_path(module), "wb"))
 
 
 # ---- facts: per-instruction abstract ops, extracted while lifting ----------------------------------------------------
@@ -525,6 +537,6 @@ def stats(summaries):
 if __name__ == "__main__":
     import build_all
     module = sys.argv[1] if len(sys.argv) > 1 else "noita"
-    s = build_all.regsum_for(module)
+    s, _ = build_all.regsum_for(module, with_slots=True)
     for k, v in sorted(stats(s).items()):
         print(f"{k:16} {v:,}")
