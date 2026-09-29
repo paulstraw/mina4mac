@@ -43,6 +43,9 @@ CC = {
 }
 
 
+GOTO_RE = re.compile(r"goto L_([0-9a-f]{8});")
+
+
 class Unsupported(Exception):
     pass
 
@@ -74,6 +77,24 @@ class Program:
         self._ordered = None
         self.ic_profile = False  # build_all.py --icprof: count indirect calls per site (guest_call_site)
         self.ic_targets = {}  # build_all.py --ic: call site address -> hot target function starts, hottest first
+        # Register sync around calls (build_all.py --sync): "full" stores and reloads all 8 GPRs; "dirty" stores only
+        # the ones assigned since the last sync; "live" (default) also skips reloads a callee's summary proves
+        # unneeded (tools/regsum.py). `summaries` is None until loaded (then {} if there's no fresh cache).
+        self.sync_mode = os.environ.get("MINA4MAC_SYNC", "live")
+        if self.sync_mode not in ("full", "dirty", "live", "check"):
+            raise ValueError(f"MINA4MAC_SYNC={self.sync_mode}")
+        self._summaries = None
+
+    @property
+    def summaries(self):
+        if self._summaries is None:
+            import regsum
+            self._summaries = (regsum.load(self.module) if self.sync_mode == "live" else None) or {}
+        return self._summaries
+
+    @summaries.setter
+    def summaries(self, s):
+        self._summaries = s
 
     def is_ordered(self, a):
         if self.tso_mode != "auto":
@@ -227,11 +248,13 @@ class FnLifter:
         self.emit(f"of = ((({a} ^ {b}) & ({a} ^ {r})) >> {bits - 1}) & 1;")
 
     # ---- control flow helpers --------------------------------------------------------------
+    # Syncs are markers until the whole function is lifted (finish_syncs): a store marker becomes stores of the
+    # registers assigned since the last sync, a reload marker reloads what the callee's summary doesn't vouch for.
     def sync_out(self):
-        self.emit("c->eax=eax; c->ecx=ecx; c->edx=edx; c->ebx=ebx; c->esp=esp; c->ebp=ebp; c->esi=esi; c->edi=edi;")
+        self.lines.append(("out",))
 
-    def sync_in(self):
-        self.emit("eax=c->eax; ecx=c->ecx; edx=c->edx; ebx=c->ebx; esp=c->esp; ebp=c->ebp; esi=c->esi; edi=c->edi;")
+    def sync_in(self, target=None):
+        self.lines.append(("in", target, self.cur.address))
 
     def call_direct(self, target, ret_addr, tail=False):
         if not tail:
@@ -241,34 +264,41 @@ class FnLifter:
         if tail:
             self.emit("return;")
         else:
-            self.sync_in()
+            self.sync_in(target)
         self.callees.add(target)
 
-    def call_indirect(self, target_expr, ret_addr, tail=False):
+    def call_indirect(self, target_expr, ret_addr, tail=False, key=None):
+        """`key`: "dll!name" for a call through an IAT slot, whose summary (tools/regsum.py) the reload can use."""
         self.emit(f"{{ uint32_t t_ = {target_expr};")
         if not tail:
             self.emit(f"esp -= 4; wr32(esp, {ret_addr:#x}u);")
         self.sync_out()
         site = self.cur.address
-        if self.p.ic_profile:
-            self.emit(f"guest_call_site(c, t_, {site:#x}u); }}")
-        else:
-            # Inline cache (build_all.py --ic): direct calls to the site's profiled hot targets, so the branch is
-            # predictable and LTO can inline small callees. Other targets (and hooks, see rt_hook) go through guest_call.
-            for t in self.p.ic_targets.get(site, ()):
-                self.emit(f"if (t_ == {t:#x}u) F_{t:08x}(c); else")
-                self.callees.add(t)
-            self.emit("guest_call(c, t_); }")
+        # Inline cache (build_all.py --ic): direct calls to the site's profiled hot targets, so the branch is
+        # predictable and LTO can inline small callees. Other targets (and hooks, see rt_hook) go through guest_call.
+        # Each branch reloads what its callee needs. An --icprof build counts every call (guest_call_site).
+        for t in self.p.ic_targets.get(site, ()):
+            self.emit(f"if (t_ == {t:#x}u) {{ " + (f"guest_call_site(c, t_, {site:#x}u);" if self.p.ic_profile else f"F_{t:08x}(c);"))
+            if not tail:
+                self.sync_in(t)
+            self.emit("} else")
+            self.callees.add(t)
+        self.emit("{ " + (f"guest_call_site(c, t_, {site:#x}u);" if self.p.ic_profile else "guest_call(c, t_);"))
+        if not tail:
+            self.sync_in(key)
+        self.emit("} }")
         if tail:
             self.emit("return;")
-        else:
-            self.sync_in()
 
     def note_import(self, op):
         """Record a call/jmp through an IAT slot. It's lifted like any indirect call: the loader points
         the slot at a host thunk (or another module's export) and guest_call dispatches on it."""
         if op.type == x86.X86_OP_MEM and not op.mem.base and not op.mem.index and (op.mem.disp & 0xffffffff) in self.p.img.imports:
             self.import_slots.add(op.mem.disp & 0xffffffff)
+            if op.mem.segment in (0, x86.X86_REG_DS):
+                dll, name = self.p.img.imports[op.mem.disp & 0xffffffff]
+                return f"{dll.lower()}!{name}"
+        return None
 
     def goto(self, t):
         if t not in self.body_set:
@@ -571,8 +601,8 @@ class FnLifter:
         if op.type == x86.X86_OP_IMM:
             self.call_direct(op.imm & 0xffffffff, ret)
         else:
-            self.note_import(op)
-            self.call_indirect(self.rd(op, 4), ret)
+            key = self.note_import(op)
+            self.call_indirect(self.rd(op, 4), ret, key=key)
 
     def st_index(self, op):
         n = self.reg_name(op.reg)
@@ -859,17 +889,20 @@ class FnLifter:
             raise Unsupported(m)
 
     # ---- function --------------------------------------------------------------------------
-    def lift(self):
+    def lift(self, facts=False):
+        """C for the function. With facts=True, also returns its abstract ops for tools/regsum.py."""
         body = self.p.function_body(self.start)
         self.body_set = set(body)
         self.callees = set()
         out = []
         prev_falls_to = None
+        first, falls, decoded = {}, {}, {}
         for a in body:
             i = self.p.decode(a)
-            self.cur = i
+            self.cur = decoded[a] = i
             if prev_falls_to is not None and prev_falls_to != a:
                 self.emit(self.goto(prev_falls_to))
+            first[a] = len(self.lines)
             self.lines.append(f"L_{a:08x}: ;  // {i.mnemonic} {i.op_str}")
             try:
                 self.lift_insn(i)
@@ -880,12 +913,30 @@ class FnLifter:
             if self.p.is_noreturn_call(a):
                 self.emit(f"guest_unimpl(c, {a:#x}u, \"noreturn import returned\"); return;")
                 ends = True
-            prev_falls_to = None if ends else a + i.size
+            prev_falls_to = falls[a] = None if ends else a + i.size
+        tail_end = None
         if prev_falls_to is not None:
             if self.p.is_func(prev_falls_to):
                 self.call_direct(prev_falls_to, 0, tail=True)
+                tail_end = prev_falls_to
             else:
                 raise Unsupported(f"falls off end at {prev_falls_to:#x}")
+        # Instruction i owns lines [first[i], first[next]): its own code plus a goto to its fallthrough if that isn't next.
+        ranges = {a: (first[a], first[body[k + 1]] if k + 1 < len(body) else len(self.lines)) for k, a in enumerate(body)}
+        succs = {}
+        for a in body:
+            lo, hi = ranges[a]
+            ss = {int(g, 16) for ln in self.lines[lo:hi] if isinstance(ln, str) for g in GOTO_RE.findall(ln)}
+            if falls[a] in self.body_set:
+                ss.add(falls[a])
+            succs[a] = ss
+        fn_facts = None
+        if facts:
+            import regsum
+            fn_facts = {"entry": self.start, "insns": {
+                a: (regsum.insn_ops(self, decoded[a], [ln for ln in self.lines[ranges[a][0]:ranges[a][1]] if isinstance(ln, str)],
+                                    tail_end if a == body[-1] else None), tuple(succs[a])) for a in body}}
+        self.finish_syncs(ranges, succs)
         self.labels.add(self.start)
         # Drop labels nobody jumps to.
         text = []
@@ -902,7 +953,65 @@ class FnLifter:
             out.append(f"  goto L_{self.start:08x};")
         out.extend(text)
         out.append("}")
-        return "\n".join(out)
+        return ("\n".join(out), fn_facts) if facts else "\n".join(out)
+
+    def finish_syncs(self, ranges=None, succs=None, mode=None):
+        """Replace the sync markers. A forward may-analysis finds the registers assigned since the last sync ("dirty":
+        the local may differ from c->r) at each store marker; after a reload every register equals c->r again,
+        including the ones a callee summary lets us skip (the store before the call made c->r equal, and the callee
+        returns it unchanged)."""
+        import regsum
+        mode = mode or self.p.sync_mode  # "full" needs no ranges/succs: tools that lift_insn loose instructions use it
+        dirty_at = {}
+        if mode != "full":
+            dirty_in = {self.start: frozenset()}
+            work = [self.start]
+            while work:
+                a = work.pop()
+                d = set(dirty_in[a])
+                lo, hi = ranges[a]
+                for k in range(lo, hi):
+                    ln = self.lines[k]
+                    if isinstance(ln, str):
+                        d |= regsum.writes(ln.split("//", 1)[0])
+                    elif ln[0] == "out":
+                        dirty_at[k] = dirty_at.get(k, frozenset()) | d
+                    else:
+                        d = set()
+                for b in succs[a]:
+                    old = dirty_in.get(b)
+                    new = frozenset(d) if old is None else old | d
+                    if new != old:
+                        dirty_in[b] = new
+                        work.append(b)
+        summaries = self.p.summaries if mode in ("live", "check") else {}
+        st = self.sync_stats = [0, 0, 0, 0]  # store markers, stores, reload markers, reloads
+        for k, ln in enumerate(self.lines):
+            if isinstance(ln, str):
+                continue
+            if ln[0] == "out":
+                regs = [r for r in GPR if mode == "full" or r in dirty_at.get(k, GPR)]
+                st[0] += 1
+                st[1] += len(regs)
+                count = [f"sync_count(0, {len(regs)});"] if self.p.ic_profile else []
+                self.lines[k] = "  " + " ".join(count + [f"c->{r}={r};" for r in regs]) if regs or count else "  ;"
+            else:
+                s = summaries.get(ln[1]) if ln[1] is not None else None
+                code = []
+                if s is None or s == regsum.BOTTOM:
+                    regs = GPR
+                else:
+                    pres, n = s
+                    regs = [r for r in GPR if r not in pres and (r != "esp" or n is None)]
+                    if n is not None:
+                        code.append(f"esp += {4 + n}u;")
+                    if mode == "check":  # --sync check: verify what live mode trusts, then reload anyway
+                        code += [f'if (c->{r} != {r}) sync_fail({ln[2]:#x}u, "{r}", c->{r}, {r});' for r in GPR if r not in regs]
+                        regs = GPR
+                st[2] += 1
+                st[3] += len(regs)
+                count = [f"sync_count(1, {len(regs)});"] if self.p.ic_profile else []
+                self.lines[k] = "  " + " ".join(count + code + [f"{r}=c->{r};" for r in regs])
 
 
 def x86_reg_op(lifter, name, size):

@@ -52,11 +52,12 @@ static inline void ret_xmm0_f32(CPU *c, float v) { c->xmm[0] = (Xmm){.f32 = {v, 
 // afterwards either way. Returns eax.
 #define GUEST_RET 0x0badc0deu
 static inline uint32_t call_guest(CPU *c, uint32_t fn, int n, const uint32_t *args) {
-    uint32_t sp = c->esp;
+    uint32_t sp = c->esp, ebx = c->ebx, esi = c->esi, edi = c->edi, ebp = c->ebp;
     for (int i = n - 1; i >= 0; i--) { c->esp -= 4; wr32(c->esp, args[i]); }
     c->esp -= 4;
     wr32(c->esp, GUEST_RET);
     guest_call(c, fn);
-    c->esp = sp;
+    // Host functions never change ebx/esi/edi/ebp (tools/regsum.py relies on it), whatever the callback does.
+    c->esp = sp, c->ebx = ebx, c->esi = esi, c->edi = edi, c->ebp = ebp;
     return c->eax;
 }

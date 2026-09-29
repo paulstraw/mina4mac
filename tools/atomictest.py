@@ -52,6 +52,7 @@ def lift_run(prog, name, first, last, tso):
         lf.cur = i
         lf.lines.append(f"L_{i.address:08x}: ;  // {i.mnemonic} {i.op_str}")
         lf.lift_insn(i)
+    lf.finish_syncs(mode="full")
     out.extend(lf.lines)
     out.append("}")
     return out

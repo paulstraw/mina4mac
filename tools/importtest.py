@@ -46,6 +46,7 @@ def main():
         out.append(f"void T_{name}(CPU *restrict c) {{")
         out.append("  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
         out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;")
+        lf.finish_syncs(mode="full")
         out.extend(lf.lines)
         out.append("}")
     gen = MOD / "testgen"

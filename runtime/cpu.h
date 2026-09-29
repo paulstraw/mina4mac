@@ -165,4 +165,6 @@ LOCKED_OPS(64, uint64_t)
 typedef void (*GuestFn)(CPU *);
 void guest_call(CPU *c, uint32_t target);   // indirect call dispatch, including imports (runtime)
 void guest_call_site(CPU *c, uint32_t target, uint32_t site);  // guest_call, counted per site (--icprof builds)
+void sync_count(uint32_t reload, uint32_t n);
+void sync_fail(uint32_t site, const char *reg, uint32_t actual, uint32_t expected);  // --sync check: a callee summary was wrong  // --icprof builds: a register sync of n stores (reload 0) or reloads
 void guest_unimpl(CPU *c, uint32_t addr, const char *what);

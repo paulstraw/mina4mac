@@ -35,7 +35,10 @@ install, run the script again. Saves are in `~/Library/Application Support/mina4
 `build/game`: copy the binaries there, then `tools/setup_game.sh` adds `data/` and `mods/`.
 `uv run tools/build_all.py` builds `build/mina4mac` with ThinLTO (about 3 minutes; `--lto off` skips it), and
 `tools/check.sh` runs the verification sequence. `tools/determinism.sh run` checks world generation against the Wine
-build without clicks.
+build without clicks. The build first runs `tools/regsum.py`, which proves per function which callee-saved registers
+it preserves and how many argument bytes it pops, so call sites can skip reloads (cached in `build/<module>/regsum.pkl`;
+about 2 minutes when the lifter changes). `build_all.py --sync check` builds a binary that verifies every skipped
+reload at run time and exits 12 on a wrong summary; `--sync full` turns the optimization off.
 
 Optional profile-guided build: `tools/pgo.sh` builds an instrumented `build/mina4mac`, trains it on the perfbench
 scenes (`tools/perfbench.sh install mina4mac` first; about 10 minutes, since the instrumented game runs ~12× slower),

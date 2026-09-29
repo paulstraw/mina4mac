@@ -169,12 +169,47 @@ Plan (2026-09-27): after ThinLTO, do the per-site inline caches first (about hal
 heavy, do register-sync liveness (1–2 sessions, riskiest); if not, re-profile before investing there. Estimate for the whole phase: 2–4
 sessions. Making `tools/determinism.sh` run unattended (like perfbench with `-gamemode 0`) would make lifter changes cheaper to verify.
 
-- [ ] Cheaper register sync.
+- [x] Cheaper register sync.
   - Use liveness at call sites: don't reload registers the caller overwrites before reading them, and don't store
     registers the callee never reads. Every compiler-generated callee in the exe follows the MSVC convention
     (eax/ecx/edx volatile; ebx/esi/edi/ebp preserved). Verify that per function by analysis, not by assumption,
     and fall back to the full sync for anything unproven (hand-written asm, `/Oy-` oddities, SEH helpers).
   - Measure the static and dynamic count of removed loads and stores first.
+  - **Kept (2026-09-28), two parts.** Reloads of registers the caller overwrites were already free: clang drops dead
+    loads. What cost was storing all 8 before every call and reloading the callee-saved ones after it.
+    1. *Dirty stores* (`lift.py finish_syncs`, no assumptions): syncs are markers until the function is lifted, then a
+       forward pass finds the registers assigned (regex over the emitted C, checked against capstone's write sets on
+       117k instructions) since the last sync; only those are stored, at calls and at `ret`.
+    2. *Callee summaries* (`tools/regsum.py`, `--sync live`, the default): an abstract interpretation per function
+       (registers as entry value / entry esp + k / unknown, stack slots filled by push) proves which of
+       ebx/esi/edi/ebp it returns unchanged and how many argument bytes it pops, solved callees-first over the call
+       graph (Tarjan SCCs, recursion from the optimistic "never returns"). After a call, proven registers aren't
+       reloaded and esp becomes `esp += 4+N`; inline-cache branches use their target's summary. Imports have summaries
+       too: host functions pop the `argbytes` of their HOST declaration and never change ebx/esi/edi/ebp (`call_guest`
+       now restores them around guest callbacks, so that holds by construction); msvcp120 imports use msvcp120's
+       summaries (solved first). vcalls lose esp, but it's recovered where every path to `ret` moves esp by known
+       amounts (`required()`: otherwise the original couldn't return); only for truly indirect calls, and a `ret` must
+       go through slot 0 still holding the return address. Assumed, as in any recompiler: saved-register slots are
+       only written by push or known-offset stores (see regsum.py's docstring).
+  - Coverage: noita 64,648 of 97,087 functions preserve all four, 68,285 have known pops; msvcp120 825 / 1,221 of 2,992.
+    The first version also recovered esp after any unknown call, which is wrong for `__SEH_prolog4` (it returns with esp
+    lowered through a copied return address): the game died at startup. `build_all.py --sync check` (a live build that
+    verifies every skipped reload at run time, exit 12) found it at once; the fixed analysis runs both perfbench scenes
+    under `--sync check` without a failure.
+  - Static (per sync point, of 8): 2.94 stores, 5.74 reloads. Dynamic (`--icprof` builds now also count syncs into
+    `<file>.sync`; flood): 2.54e10 store syncs at 3.62 registers, 1.28e10 reload syncs at 3.98, so register memory
+    operations around calls fall 53% (305e9 → 143e9).
+  - Heavy, 4 pairs vs `--sync full` (build/perfab/20260928-163936; full = the Phase 11 IC build): **work_ms 19.86 → 16.20
+    (−18.4%)**, work_p95 −20.2%, **fps 38.99 → 47.48 (+21.8%)**, cpu_ms −7.3%, cpu_p95 −14.1%. The ranges don't
+    overlap. Dirty stores alone vs live, 3 pairs (build/perfab/20260928-164705): live is another −9.8% work_ms, so each part gives about half.
+  - Cost: the regsum pass takes ~30 s (both modules, cached in build/<module>/regsum.pkl until lift.py, regsum.py, the
+    discovered code or an import summary changes); binary 55.3 → 61.3 MB (smaller functions, so ThinLTO inlines more).
+  - Gates: `tools/check.sh` passed (the insntest/atomictest/importtest generators lift loose instructions, so they
+    now call `finish_syncs(mode="full")`). Determinism (build/det/sync_1.txt) vs the Phase 11 run ic_1: seed, RNG and
+    libm identical; snapshot diffs f1 37, f60 70, f600 51 lines, the same as the Phase 10 memfix run (69–70 / 54).
+    libm vs Wine still differs, as before this change.
+  - Not done: skipping `ret` stores of callee-saved registers that were popped back to their entry value (they count
+    as dirty), and summaries for vcall targets (a vcall still reloads ebx/esi/edi/ebp).
 - [x] Indirect-call dispatch.
   - Resolve known targets at lift time: vtable calls whose table is a constant in `.rdata`, and calls through IAT
     slots to recompiled modules (msvcp120 → direct `F_` calls instead of `guest_call`).

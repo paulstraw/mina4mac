@@ -305,8 +305,39 @@ void guest_call_site(CPU *c, uint32_t target, uint32_t site) {
     guest_call(c, target);
 }
 
+// Register syncs around calls (--icprof builds): [stores, reloads] x [syncs, registers]. Each thread adds into its own
+// counters and flushes them every 2^16 syncs, so a thread's last partial batch is lost (a rounding error).
+static uint64_t SYNC_TOTAL[2][2];
+static _Thread_local uint64_t SYNC_ACC[2][2];
+
+void sync_count(uint32_t reload, uint32_t n) {
+    SYNC_ACC[reload][0]++;
+    SYNC_ACC[reload][1] += n;
+    if (!(SYNC_ACC[reload][0] & 0xffff)) {
+        __atomic_fetch_add(&SYNC_TOTAL[reload][0], SYNC_ACC[reload][0], __ATOMIC_RELAXED);
+        __atomic_fetch_add(&SYNC_TOTAL[reload][1], SYNC_ACC[reload][1], __ATOMIC_RELAXED);
+        SYNC_ACC[reload][0] = SYNC_ACC[reload][1] = 0;
+    }
+}
+
+void sync_fail(uint32_t site, const char *reg, uint32_t actual, uint32_t expected) {
+    fprintf(stderr, "sync check: after the call at %#x, %s is %#x but its callee's summary says %#x\n", site, reg, actual,
+            expected);
+    exit(12);
+}
+
 void rt_icprof_write(void) {
     if (!ICPROF_PATH) return;
+    char sp[1024];
+    snprintf(sp, sizeof sp, "%s.sync", ICPROF_PATH);
+    FILE *sf = fopen(sp, "w");
+    if (sf) {
+        for (int r = 0; r < 2; r++)
+            fprintf(sf, "%s\t%llu syncs\t%llu registers\n", r ? "reloads" : "stores",
+                    (unsigned long long)__atomic_load_n(&SYNC_TOTAL[r][0], __ATOMIC_RELAXED),
+                    (unsigned long long)__atomic_load_n(&SYNC_TOTAL[r][1], __ATOMIC_RELAXED));
+        fclose(sf);
+    }
     FILE *f = fopen(ICPROF_PATH, "w");
     if (!f) { perror(ICPROF_PATH); return; }
     for (int i = 0; i < ICPROF_SLOTS; i++) {

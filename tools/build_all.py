@@ -14,7 +14,9 @@ build/gen_all/. Functions the lifter can't handle yet become stubs that report g
   uv run tools/build_all.py --lto off    no ThinLTO (default thin: cross-chunk inlining, cache in build/lto_cache/)
   uv run tools/build_all.py --chunking contiguous   chunks of adjacent functions (default round-robin)
   uv run tools/build_all.py --icprof     count indirect calls per site (MINA4MAC_ICPROF=<file>; tools/icache.py)
+                                         and register syncs (<file>.sync)
   uv run tools/build_all.py --ic none    no inline caches (default: the sites in tools/icache_sites.txt)
+  uv run tools/build_all.py --sync full|dirty|check   register sync around calls (default live: tools/regsum.py summaries)
 
 Profiles come from the user's own game and stay in build/ (never commit them).
 """
@@ -28,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
+import regsum  # noqa: E402
 from pe import MODULES, build_dir  # noqa: E402
 import gen_gl  # noqa: E402
 import gen_sdl  # noqa: E402
@@ -51,10 +54,41 @@ IC_SITES = ROOT / "tools/icache_sites.txt"
 _prog = None
 
 
-def _init(module, icprof, ic_targets):
+def _init(module, icprof, ic_targets, sync="live", summaries=None):
     global _prog
     _prog = Program(module)
-    _prog.ic_profile, _prog.ic_targets = icprof, ic_targets
+    _prog.ic_profile, _prog.ic_targets, _prog.sync_mode = icprof, ic_targets, sync
+    _prog.summaries = summaries or {}
+
+
+def _facts_chunk(addrs):
+    """tools/regsum.py facts for these functions (unliftable ones are left out: callers assume nothing)."""
+    out = {}
+    for a in addrs:
+        try:
+            out[a] = FnLifter(_prog, a).lift(facts=True)[1]
+        except Unsupported:
+            pass
+    return out
+
+
+def _module_starts(prog):
+    return sorted(a for a in prog.all_starts | prog.direct_calls if prog.t_lo <= a < prog.t_hi)
+
+
+def regsum_for(module):
+    """Register-preservation summaries for `module` (tools/regsum.py), from the cache or computed and cached."""
+    s = regsum.load(module)
+    if s is None:
+        starts = _module_starts(Program(module))
+        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(module, False, {}, "full")) as pool:
+            facts = {}
+            for f in pool.imap_unordered(_facts_chunk, [starts[k::CHUNKS] for k in range(CHUNKS)]):
+                facts.update(f)
+        extern = regsum.extern_summaries(module)
+        s = regsum.solve(facts, extern)
+        regsum.save(module, s, extern)
+    return s
 
 
 def _load_ic(path, starts):
@@ -76,15 +110,18 @@ def _lift_chunk(args):
     k, addrs = args
     out = ['#include "cpu.h"', '#include "decls.h"']
     failed = 0
+    stats = [0, 0, 0, 0]
     for a in addrs:
         try:
-            out.append(FnLifter(_prog, a).lift())
+            lf = FnLifter(_prog, a)
+            out.append(lf.lift())
+            stats = [x + y for x, y in zip(stats, lf.sync_stats)]
         except Unsupported as e:
             failed += 1
             msg = str(e).replace('"', "'")[:80]
             out.append(f'void F_{a:08x}(CPU *restrict c) {{ guest_unimpl(c, {a:#x}u, "{msg}"); }}')
     (build_dir(_prog.module) / "gen" / f"chunk{k:03}.c").write_text("\n".join(out))
-    return failed
+    return failed, stats
 
 
 def build_luajit():
@@ -138,6 +175,10 @@ def main():
                     help="inline-cache sites from tools/icache.py ('none' for plain guest_call everywhere)")
     ap.add_argument("--chunking", choices=("roundrobin", "contiguous"), default="roundrobin",
                     help="contiguous keeps neighbours (MSVC links a source file's functions together) in one chunk, so direct calls can inline")
+    ap.add_argument("--sync", choices=("live", "dirty", "full", "check"), default="live",
+                    help="full: store and reload all 8 GPRs at every call; dirty: store only assigned ones; "
+                         "live: also skip reloads callee summaries prove unneeded (tools/regsum.py); check: live's code, but "
+                         "verify each skipped reload at run time (exit 12 on a wrong summary)")
     args = ap.parse_args()
     modules = args.modules or ["noita", "msvcp120"]
     pgo = _pgo_flags(args.pgo)
@@ -149,14 +190,22 @@ def main():
     for m in modules:
         prog = Program(m)
         prog.is_ordered(prog.t_lo)  # run tools/memorder.py's analysis (or load its cache) before the workers
-        starts_by_mod[m] = sorted(a for a in prog.all_starts | prog.direct_calls if prog.t_lo <= a < prog.t_hi)
+        starts_by_mod[m] = _module_starts(prog)
     starts = sorted(a for s in starts_by_mod.values() for a in s)
     assert len(starts) == len(set(starts)), "modules overlap"
     ic_path = ROOT / args.ic
-    ic = {} if args.icprof or args.ic == "none" or not ic_path.exists() else _load_ic(ic_path, set(starts))
+    # An --icprof build keeps the inline-cache branches, so its sync counts match the default build's, but every
+    # branch calls guest_call_site, so the site profile is the same either way.
+    ic = {} if args.ic == "none" or not ic_path.exists() else _load_ic(ic_path, set(starts))
     (GEN / "decls.h").write_text("\n".join(f"void F_{a:08x}(CPU *restrict c);" for a in starts))
     t0 = time.time()
+    gen_sdl.generate()  # the bridges' HOST declarations give regsum the imports' stack pops
+    gen_gl.generate()
+    # msvcp120 first: noita's summaries use its exports'
+    summaries = {m: regsum_for(m) if args.sync in ("live", "check") else {} for m in sorted(modules, key=lambda m: m != "msvcp120")}
+    tsum = time.time()
     failed = 0
+    sync = [0, 0, 0, 0]
     chunk_srcs = []
     for m, ms in starts_by_mod.items():
         mgen = build_dir(m) / "gen"
@@ -167,8 +216,10 @@ def main():
             chunks = [(k, ms[k * len(ms) // CHUNKS:(k + 1) * len(ms) // CHUNKS]) for k in range(CHUNKS)]
         else:
             chunks = [(k, ms[k::CHUNKS]) for k in range(CHUNKS)]
-        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m, args.icprof, ic)) as pool:
-            failed += sum(pool.map(_lift_chunk, chunks))
+        with mp.Pool(os.cpu_count(), initializer=_init, initargs=(m, args.icprof, ic, args.sync, summaries[m])) as pool:
+            for f, st in pool.map(_lift_chunk, chunks):
+                failed += f
+                sync = [x + y for x, y in zip(sync, st)]
         chunk_srcs += sorted(mgen.glob("chunk*.c"))
     t1 = time.time()
     table = ['#include "rt.h"', '#include "decls.h"',
@@ -178,8 +229,6 @@ def main():
     table += ["const uint32_t IC_TARGETS[] = {" + ",".join([f"{t:#x}u" for t in ic_fns] + ["0"]) + "};",
               f"const int IC_TARGET_COUNT = {len(ic_fns)};"]
     (GEN / "table.c").write_text("\n".join(table))
-    gen_sdl.generate()
-    gen_gl.generate()
     build_luajit()
     launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c", "gl_gen.c"]
     srcs = chunk_srcs + [GEN / "table.c", GEN / "sdl2_gen.c", GEN / "gl_gen.c"] + [ROOT / "runtime" / n for n in ("rt.c", "harness.c", "bench.c", *LAUNCHER, *SDL, *LUA)]
@@ -203,8 +252,9 @@ def main():
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks; "
-          f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}")
-    print(f"lift {t1 - t0:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
+          f"{'icprof' if args.icprof else f'inline caches {len(ic)} sites'}; sync {args.sync}: "
+          f"{sync[1] / max(sync[0], 1):.2f} stores/call site, {sync[3] / max(sync[2], 1):.2f} reloads/return (of 8)")
+    print(f"regsum {tsum - t0:.0f}s, lift {t1 - tsum:.0f}s, compile {t2 - t1:.0f}s, link {t3 - t2:.0f}s; C source {src_mb:.0f} MB; "
           f"binary {exe.stat().st_size / 1e6:.1f} MB")
 
 
