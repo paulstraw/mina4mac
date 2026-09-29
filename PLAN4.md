@@ -150,8 +150,20 @@ Re-ranked 2026-09-28 from the jungle profile (PROFILE.md "Jungle"): first the tw
 summaries and stack slots (both lifted-code speed, which is still most of main's time). Inline caches and the Lua
 bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap check after the others.
 
-- [ ] QoS user-interactive by default (`runtime/sched.c`): measured jungle −8.2% work_ms, heavy neutral. Confirm
+- [x] QoS user-interactive by default (`runtime/sched.c`): measured jungle −8.2% work_ms, heavy neutral. Confirm
   flood holds 60, then flip the default and keep the knob.
+  - 2026-09-28: flood capped holds 60 (59.8 vs 59.7 fps), but its capped work_ms rose +20% (10.65 → 12.81, cpu_ms
+    +15%, ranges disjoint; build/perfab_flood_qos.log). Uncapped flood shows no real loss: fps −1.2%, work_ms +1.4%,
+    ranges overlapping (build/perfab_flood_unc_qos.log). So the capped rise is idle headroom under the 60 Hz cap
+    (clocks or placement at light load), not lost throughput; heavy (+0.4%) and jungle (−8.2%) are the loaded cases.
+  - Now the default. `MINA4MAC_QOS=interactive|initiated|none` (`none` = the old unspecified default) stays as the
+    knob; the build/sched/base wrapper now needs `MINA4MAC_QOS=none` to reproduce the old behaviour.
+  - check.sh: all steps ok except one difftest trial (seed 16051): `0x87ae40` (a noise function, float args in
+    xmm0–2, keeps values in xmm5–7 across its calls, so an LTCG convention) mismatches on xmm5/6/7 and one stack byte
+    in ~25% of trials (`difftest.py --all --only 0x87ae40 --trials 20`: 6/20 and 5/20 fails on two seeds). Not this
+    change: difftest doesn't link runtime/sched.c, and check.sh just happened to sample it. The mismatched registers
+    are plain `movapd`/`movaps` copies of the inputs, so the first suspect is NaN handling on XMM moves. Investigate
+    at the start of the XMM task below, since that task rewrites exactly this code.
 - [ ] XMM registers in C locals, like PLAN3's GPR register sync: load the XMM registers a function uses at entry,
   keep them in locals, store dirty ones before calls/returns/exits and reload after calls. MSVC's x86 convention
   treats all XMM as volatile, but check for LTCG custom conventions passing values in XMM (a `--sync check`-style

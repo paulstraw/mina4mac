@@ -229,7 +229,8 @@ work plus the tail of the single-threaded physics step.
   guest-memory stores through the fixed `MEM` address may alias it. 85% of Box2D's self time is in functions with
   ≥20% XMM instructions; main thread 31% (+10% with 5–20%); cell-sim workers 12% (their hot code is integer).
   This is the XMM analogue of PLAN3's register sync (GPRs in locals, −18% heavy).
-- **Scheduling**: `MINA4MAC_QOS=interactive` (runtime/sched.c, off since PLAN3 Phase 9 found nothing on heavy)
+- **Scheduling**: `MINA4MAC_QOS=interactive` (runtime/sched.c, off since PLAN3 Phase 9 found nothing on heavy; the
+  default since PLAN4 Phase 16, uncapped flood neutral)
   gives jungle work_ms **−8.2%** (18.1 → 16.6, fps +4.7%, p95 −10.6%, ranges disjoint, build/perfab_jungle_qos.log).
   The single-thread critical path (Box2D, main) is what an E-core hurts most.
 - Ruled out by this profile: the Lua bridge (0.4%), dispatch/uncached indirect calls (1.7% in all; call_thunk 1.7%).

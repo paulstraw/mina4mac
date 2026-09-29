@@ -12,6 +12,8 @@
 #include <unistd.h>
 
 static uint32_t NCPU;  // 0 until sched_init (the tests don't call it): all CPUs
+// User-interactive QoS keeps main (and the Box2D step it waits for) on the P-cores: jungle work_ms -8.2%, heavy
+// and flood neutral (PLAN4 Phase 16). It only takes effect after sched_init, so the tests stay unspecified.
 static qos_class_t QOS = QOS_CLASS_UNSPECIFIED;
 // The game's job wait loop (while (pending) _Thrd_yield()) calls Sleep(0) 40-70k times a frame. usleep(0)
 // returns at once, so main spins on a core the 9 workers need, pushing them onto the E-cores; a 20 µs nap
@@ -41,10 +43,10 @@ void sched_init(void) {
     }
     NCPU = n < 1 ? 1 : n > 32 ? 32 : (uint32_t)n;
 
-    const char *qos = env("MINA4MAC_QOS", "default");
-    QOS = !strcmp(qos, "interactive") ? QOS_CLASS_USER_INTERACTIVE
-        : !strcmp(qos, "initiated")   ? QOS_CLASS_USER_INITIATED
-                                      : QOS_CLASS_UNSPECIFIED;
+    const char *qos = env("MINA4MAC_QOS", "interactive");
+    QOS = !strcmp(qos, "none")      ? QOS_CLASS_UNSPECIFIED
+        : !strcmp(qos, "initiated") ? QOS_CLASS_USER_INITIATED
+                                    : QOS_CLASS_USER_INTERACTIVE;
 
     const char *y = env("MINA4MAC_YIELD", "nap20");
     if (!strcmp(y, "sched")) YIELD = Y_SCHED;
