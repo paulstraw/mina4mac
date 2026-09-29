@@ -139,8 +139,13 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
   - Lua is 0.4% of busy samples and dispatch 1.7%, so the next two tasks have little to find (see Phase 16).
 - [ ] Count what the benchmarks didn't: Lua bridge calls and guest callbacks per frame (a counter build or a
   `MINA4MAC_*` knob in `runtime/lua51.c`), and the cost per call. Entities alive per frame, from the mod.
-- [ ] Indirect calls in the jungle: run the `--icprof` counting build on the jungle scene and compare with the
+- [x] Indirect calls in the jungle: run the `--icprof` counting build on the jungle scene and compare with the
   flood/heavy profile. How many of its hot sites are uncached, and what share of its indirect calls miss a cache?
+  - 2026-09-29 (done with the Phase 16 inline-cache task, build/icj/): 5.0e9 indirect calls over 23.1k sites (heavy
+    1.6e10 over 21.7k), still almost all monomorphic (the top 400 sites take 95.9%, their top target 97.7%). But
+    they're spread wider: 796 sites reach 99% (heavy 365), 419 of those had no cache (5.2% of calls), and with the
+    flood/heavy sites only 93.1% of jungle calls hit a cached target (heavy 98.0%). The counting build ran the scene
+    at 22 fps; `perfbench.sh` now takes `TIMEOUT=<s>` for slow builds (default 300).
 
 ### Phase 16: fix what the profile shows
 
@@ -195,8 +200,22 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     counts are noise, not this change.
   - Left for later if the next profile asks for it: skipping XMM reloads after calls to functions that provably
     don't write XMM (a regsum-style summary). Every call currently reloads each XMM local it uses.
-- [ ] Inline caches for all three scenes: merge the jungle profile into `tools/icache_sites.txt` (`tools/icache.py`
+- [x] Inline caches for all three scenes: merge the jungle profile into `tools/icache_sites.txt` (`tools/icache.py`
   already merges scenes with equal weight) and A/B on jungle *and* heavy, so the new sites don't cost the old scenes.
+  - 2026-09-29: `tools/icache.py build/icprof/heavy.tsv build/icprof/flood.tsv build/icj/jungle.tsv` (same settings):
+    388 → 607 sites (321 → 490 caches; the rest go to import thunks). Hits: jungle 93.1% → 97.0%, heavy 98.0% →
+    98.2%, flood 98.7% → 99.1%. Binary unchanged at 61.4 MB.
+  - A/B, A = 64137c9 (build/icj/, build/perfab/20260929-110010 and -110728):
+
+    | scene | pairs | fps A → B | work_ms A → B | work_p95 | main cpu_ms |
+    |---|---|---|---|---|---|
+    | jungle | 4 | 46.6 → 48.0 (+2.9%) | 16.55 → 15.96 (−3.6%), B faster in 3 of 4 pairs | +0.1% | −3.9% |
+    | heavy | 3 | 47.7 → 48.2 (+1.1%) | 16.15 → 15.94 (−1.3%) | +0.4% | −4.2%, ranges disjoint |
+
+    Small but in the expected direction (about 4% of the jungle's indirect calls stop going through `guest_call`),
+    and heavy doesn't lose. Kept.
+  - check.sh ok (seed 29486; the launcher ran its 300 s into a world). Determinism not rerun: only which sites get a
+    cache changed, and a cache miss still goes through `guest_call` to the same target.
 - [ ] Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in
   `call_guest` callbacks, check that LuaJIT's JIT is on for the game's scripts and isn't aborting traces on the
   bridge's C functions.

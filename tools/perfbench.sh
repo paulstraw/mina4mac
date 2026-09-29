@@ -101,7 +101,7 @@ run)
             sleep 2; pkill -f "$APP/Contents/MacOS/Sikarugir" || true
         }
     fi
-    for _ in $(seq 1 600); do
+    for _ in $(seq 1 $((${TIMEOUT:-300} * 2))); do  # TIMEOUT seconds (slow counting builds need more)
         grep -q "PERFBENCH done" "$GAME/perfbench.txt" 2>/dev/null && break
         kill -0 "$pid" 2>/dev/null || break
         sleep 0.5
