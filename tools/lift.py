@@ -1,8 +1,8 @@
 """Static recompiler: x86-32 functions from one module (noita.exe, or a DLL at its chosen base) -> C.
 
-Each guest function becomes `void F_<addr>(CPU *c)`. General-purpose registers and flags live in
-C locals for the body of the function and are synced to `c` around calls and at exit, so clang can
-keep them in host registers and drop flag computations nobody reads.
+Each guest function becomes `void F_<addr>(CPU *c)`. General-purpose registers, the XMM registers
+it uses and flags live in C locals for the body of the function and are synced to `c` around calls
+and at exit, so clang can keep them in host registers and drop flag computations nobody reads.
 """
 import os
 import pickle
@@ -44,6 +44,9 @@ CC = {
 
 
 GOTO_RE = re.compile(r"goto L_([0-9a-f]{8});")
+# Assignments to an XMM local (`xN = ` or `xN.f32[k] = `), like regsum.WRITE_RE for GPRs. lift_sse only takes `&xN`
+# as a memcpy source, so unlike GPRs an address doesn't count as a write.
+XMM_WRITE_RE = re.compile(r"\bx([0-7])(?:\.\w+\[[^\]]*\])?\s*=(?!=)")
 
 
 class Unsupported(Exception):
@@ -149,6 +152,7 @@ class FnLifter:
         self.lines = []
         self.labels = set()
         self.import_slots = set()  # IAT slots called or jumped through
+        self.xmm_used = set()  # XMM registers the function names; they live in locals x0..x7
 
     # ---- operands -------------------------------------------------------------------------
     def reg_name(self, r):
@@ -221,7 +225,8 @@ class FnLifter:
         n = self.reg_name(op.reg) if op.type == x86.X86_OP_REG else None
         if not n or not n.startswith("xmm"):
             raise Unsupported(n)
-        return f"c->xmm[{n[3:]}]"
+        self.xmm_used.add(int(n[3:]))
+        return f"x{n[3:]}"
 
     def emit(self, s):
         self.lines.append("  " + s)
@@ -947,19 +952,27 @@ class FnLifter:
             else:
                 text.append(ln)
         out.append(f"void F_{self.start:08x}(CPU *restrict c) {{")
-        out.append("  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
-        out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)cf; (void)zf; (void)sf; (void)of; (void)pf;")
+        out.extend(self.prologue())
         if body[0] != self.start:
             out.append(f"  goto L_{self.start:08x};")
         out.extend(text)
         out.append("}")
         return ("\n".join(out), fn_facts) if facts else "\n".join(out)
 
+    def prologue(self):
+        """Declarations of the register and flag locals, loaded from `c` (after lifting, so xmm_used is known)."""
+        out = ["  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;",
+               "  uint8_t cf=0, zf=0, sf=0, of=0, pf=0; (void)cf; (void)zf; (void)sf; (void)of; (void)pf;"]
+        if self.xmm_used:
+            out.append("  Xmm " + ", ".join(f"x{n}=c->xmm[{n}]" for n in sorted(self.xmm_used)) + ";")
+        return out
+
     def finish_syncs(self, ranges=None, succs=None, mode=None):
         """Replace the sync markers. A forward may-analysis finds the registers assigned since the last sync ("dirty":
         the local may differ from c->r) at each store marker; after a reload every register equals c->r again,
         including the ones a callee summary lets us skip (the store before the call made c->r equal, and the callee
-        returns it unchanged)."""
+        returns it unchanged). XMM locals get the same dirty stores, but every call reloads all of them: MSVC treats
+        XMM as volatile, and LTCG conventions pass values in any of them (0x87ae40 keeps xmm5-7 across its calls)."""
         import regsum
         mode = mode or self.p.sync_mode  # "full" needs no ranges/succs: tools that lift_insn loose instructions use it
         dirty_at = {}
@@ -973,7 +986,9 @@ class FnLifter:
                 for k in range(lo, hi):
                     ln = self.lines[k]
                     if isinstance(ln, str):
-                        d |= regsum.writes(ln.split("//", 1)[0])
+                        code = ln.split("//", 1)[0]
+                        d |= regsum.writes(code)
+                        d |= {f"x{g}" for mm in XMM_WRITE_RE.finditer(code) for g in mm.groups() if g}
                     elif ln[0] == "out":
                         dirty_at[k] = dirty_at.get(k, frozenset()) | d
                     else:
@@ -991,10 +1006,12 @@ class FnLifter:
                 continue
             if ln[0] == "out":
                 regs = [r for r in GPR if mode == "full" or r in dirty_at.get(k, GPR)]
+                xs = [n for n in sorted(self.xmm_used) if mode == "full" or f"x{n}" in dirty_at.get(k, (f"x{n}",))]
                 st[0] += 1
                 st[1] += len(regs)
                 count = [f"sync_count(0, {len(regs)});"] if self.p.ic_profile else []
-                self.lines[k] = "  " + " ".join(count + [f"c->{r}={r};" for r in regs]) if regs or count else "  ;"
+                code = count + [f"c->{r}={r};" for r in regs] + [f"c->xmm[{n}]=x{n};" for n in xs]
+                self.lines[k] = "  " + " ".join(code) if code else "  ;"
             else:
                 s = summaries.get(ln[1]) if ln[1] is not None else None
                 code = []
@@ -1011,7 +1028,8 @@ class FnLifter:
                 st[2] += 1
                 st[3] += len(regs)
                 count = [f"sync_count(1, {len(regs)});"] if self.p.ic_profile else []
-                self.lines[k] = "  " + " ".join(count + code + [f"{r}=c->{r};" for r in regs])
+                self.lines[k] = "  " + " ".join(count + code + [f"{r}=c->{r};" for r in regs]
+                                                + [f"x{n}=c->xmm[{n}];" for n in sorted(self.xmm_used)])
 
 
 def x86_reg_op(lifter, name, size):

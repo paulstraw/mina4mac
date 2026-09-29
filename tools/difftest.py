@@ -33,6 +33,19 @@ CPUID = {0: (1, 0x756e6547, 0x6c65746e, 0x49656e69), 1: (0x000006f6, 0x00000800,
 NAMES = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi", "fs_base"]
 
 
+def canon_nan(b):
+    """x86 and ARM make different default NaNs for invalid operations (inf - inf, 0 * inf): x86's is negative
+    (f32 0xffc00000, f64 0xfff8000000000000), ARM's positive. Emulating the sign would cost every float op, so
+    compare aligned words with the x86 default NaN mapped to ARM's (an f64 NaN's high word is its upper half)."""
+    w = bytearray(b)
+    for k in range(0, len(w) - 3, 4):
+        if w[k:k + 4] == b"\x00\x00\xc0\xff":
+            w[k + 3] = 0x7f
+        elif w[k:k + 4] == b"\x00\x00\xf8\xff" and k >= 4 and w[k - 4:k] == bytes(4):
+            w[k + 3] = 0x7f
+    return bytes(w)
+
+
 def closure(ok, roots):
     seen, work = set(), list(roots)
     while work:
@@ -189,6 +202,7 @@ def main():
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--only", type=lambda s: int(s, 16))
     ap.add_argument("--x87", action="store_true", help="only functions whose own body uses x87")
+    ap.add_argument("--sse", action="store_true", help="only functions whose own body uses XMM registers")
     ap.add_argument("--all", action="store_true", help="use the whole-program build (indirect calls allowed)")
     args = ap.parse_args()
     rng = random.Random(args.seed)
@@ -197,11 +211,12 @@ def main():
     if args.only:
         cands, total = [(args.only, closure(ok, [args.only]))], 1
     else:
-        if args.x87:
-            ok_x87 = {a: v for a, v in ok.items()
-                      if any(prog.insns[x][1].startswith("f") for x in prog.function_body(a))}
+        if args.x87 or args.sse:
+            uses = (lambda m, o: m.startswith("f")) if args.x87 else (lambda m, o: "xmm" in o)
+            ok_sel = {a: v for a, v in ok.items()
+                      if any(uses(*prog.insns[x][1:]) for x in prog.function_body(a))}
             pool, _ = pick_candidates(ok, 10**9, rng, args.all)
-            pool = [(a, cl) for a, cl in pool if a in ok_x87]
+            pool = [(a, cl) for a, cl in pool if a in ok_sel]
             cands, total = pool[:args.funcs], len(pool)
         else:
             cands, total = pick_candidates(ok, args.funcs, rng, args.all)
@@ -246,13 +261,15 @@ def main():
             for k in range(8):
                 if want[0][k] != got[0][k]:
                     diffs.append(f"{NAMES[k]} {want[0][k]:#x} != {got[0][k]:#x}")
-            if want[1] != got[1]:
+            wx, gx = canon_nan(want[1]), canon_nan(got[1])
+            if wx != gx:
                 for k in range(8):
-                    if want[1][k * 16:k * 16 + 16] != got[1][k * 16:k * 16 + 16]:
+                    if wx[k * 16:k * 16 + 16] != gx[k * 16:k * 16 + 16]:
                         diffs.append(f"xmm{k}")
             names = ["stack", "scratch", "teb", ".data"]
             for k, (w, g) in enumerate(zip(want[2], got[2])):
-                if w != g:
+                if w != g and canon_nan(w) != canon_nan(g):
+                    w, g = canon_nan(w), canon_nan(g)
                     first = next(j for j in range(len(w)) if w[j] != g[j])
                     diffs.append(f"{names[k]}+{first:#x}")
             if diffs:

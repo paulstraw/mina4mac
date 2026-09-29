@@ -98,8 +98,7 @@ def main():
             except Unsupported as e:
                 sys.exit(f"{m} ({ins.mnemonic} {ins.op_str}): unsupported: {e}")
         out.append(f"void F_{t:08x}(CPU *restrict c) {{")
-        out.append("  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;")
-        out.append("  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;")
+        out.extend(lf.prologue())
         lf.finish_syncs(mode="full")
         out.extend(lf.lines)
         out.append("}")

@@ -164,10 +164,37 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     change: difftest doesn't link runtime/sched.c, and check.sh just happened to sample it. The mismatched registers
     are plain `movapd`/`movaps` copies of the inputs, so the first suspect is NaN handling on XMM moves. Investigate
     at the start of the XMM task below, since that task rewrites exactly this code.
-- [ ] XMM registers in C locals, like PLAN3's GPR register sync: load the XMM registers a function uses at entry,
+- [x] XMM registers in C locals, like PLAN3's GPR register sync: load the XMM registers a function uses at entry,
   keep them in locals, store dirty ones before calls/returns/exits and reload after calls. MSVC's x86 convention
   treats all XMM as volatile, but check for LTCG custom conventions passing values in XMM (a `--sync check`-style
   mode). Target: Box2D's step (the tail main spin-waits on) and main's SSE code. A/B on jungle and heavy.
+  - 2026-09-29, the 0x87ae40 mismatch first: not a lifter bug. Unicorn traced it to `addss` of inf + −inf at
+    0x870b4c (random inputs overflow the noise function), which makes the *default NaN*: x86's is negative
+    (0xffc00000), ARM's positive (0x7fc00000). The NaN then flows into xmm5–7 and two stack slots. Emulating the
+    x86 sign would cost every float op, and the determinism check never saw it, so `difftest.py` now compares
+    with the x86 default NaN mapped to ARM's (`canon_nan`, aligned f32 and f64 words): 40/40 trials pass on two
+    seeds.
+  - `tools/lift.py`: the XMM registers a function names live in locals `x0`–`x7`, loaded at entry. Store markers
+    also store the XMM locals assigned since the last sync (the same dirty analysis; `XMM_WRITE_RE`), and every
+    call reloads all of the function's XMM locals. So no summaries and no check mode are needed: it's as safe as
+    before for any convention, including 0x87ae40's LTCG one (xmm5–7 kept across its calls). The loose-instruction
+    tools use the new `FnLifter.prologue()`.
+  - New `difftest.py --sse` (functions whose own body names an XMM register), now a check.sh step. 695 such
+    functions: 505 + 1026 trials pass (seeds 11, 23), 0 fail; default difftest 2231 pass, 0 fail.
+  - Box2D's `F_009b2ec0`: 351 → 281 lines of asm, loads/stores 207 → 108, no 128-bit q loads/stores left.
+  - A/B, 3 interleaved pairs each, both sides `MINA4MAC_QOS=interactive` (build/xmm/, build/perfab/20260929-*):
+
+    | scene | fps A → B | work_ms A → B | work_p95 | main cpu_ms |
+    |---|---|---|---|---|
+    | jungle | 42.6 → **46.4 (+9.1%)**, ranges disjoint | 19.0 → 16.8 (−11.9%) | −16.5% | −14.2% |
+    | heavy | 47.3 → 48.6 (+2.8%) | 16.3 → 15.9 (−2.8%) | +0.6% | −5.0% |
+
+  - check.sh ok (the new sse difftest step: 515 pass; the launcher step hit the known agent-launch stall).
+    Determinism (build/xmm/seedprint_*.txt): A vs B seed/procedural/random/libm identical, snapshots f60 61–63 and
+    f600 43–47 lines against a B-vs-B band of 50 / 42. Against Wine, A reads f60 89 and B 80–82 today, so those
+    counts are noise, not this change.
+  - Left for later if the next profile asks for it: skipping XMM reloads after calls to functions that provably
+    don't write XMM (a regsum-style summary). Every call currently reloads each XMM local it uses.
 - [ ] Inline caches for all three scenes: merge the jungle profile into `tools/icache_sites.txt` (`tools/icache.py`
   already merges scenes with equal weight) and A/B on jungle *and* heavy, so the new sites don't cost the old scenes.
 - [ ] Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in

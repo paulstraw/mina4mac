@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Full verification sequence: survey, build_all, difftest (default and --x87), x87regtest, atomictest, importtest,
+# Full verification sequence: survey, build_all, difftest (default, --x87 and --sse), x87regtest, atomictest, importtest,
 # hosttest, envtest, loadtest, undnametest, sdltest, luatest, gltest, fmodtest (if FMOD is set up), then a launcher run (informational: prints where build/mina4mac stops).
 # Exits non-zero if the lifted count drops below tools/lifted_baseline.txt or any
 # difftest step reports fail/native_err, or x87regtest/atomictest/importtest/hosttest/envtest/loadtest/undnametest/sdltest/luatest/gltest/fmodtest fails. A higher lifted count raises the baseline.
@@ -39,8 +39,8 @@ fi
 step build_all uv run tools/build_all.py
 echo "build_all: ok $(head -1 "$LOG/build_all.log")"
 
-for mode in default x87; do
-    flag=""; [ "$mode" = x87 ] && flag=--x87
+for mode in default x87 sse; do
+    flag=""; [ "$mode" != default ] && flag=--$mode
     step "difftest_$mode" uv run tools/difftest.py --all --funcs 1500 --trials 3 --seed "$SEED" $flag
     stats=$(grep -E "^\{'pass_'" "$LOG/difftest_$mode.log")
     fail=$(sed -nE "s/.*'fail': ([0-9]+).*/\1/p" <<<"$stats")

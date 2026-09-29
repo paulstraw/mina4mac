@@ -43,16 +43,13 @@ def lift_run(prog, name, first, last, tso):
         a += prog.insns[a][0]
     lf = FnLifter(prog, first)
     lf.body_set, lf.callees = set(addrs), set()
-    out = [f"// {name}: {first:#x}..{last:#x}, MINA4MAC_TSO={tso}",
-           f"void T_{name}(CPU *restrict c) {{",
-           "  uint32_t eax=c->eax, ecx=c->ecx, edx=c->edx, ebx=c->ebx, esp=c->esp, ebp=c->ebp, esi=c->esi, edi=c->edi;",
-           "  uint8_t cf=0, zf=0, sf=0, of=0, pf=0;"]
     ret = next(prog.md.disasm(b"\xc3", a))
     for i in [prog.decode(x) for x in addrs] + [ret]:
         lf.cur = i
         lf.lines.append(f"L_{i.address:08x}: ;  // {i.mnemonic} {i.op_str}")
         lf.lift_insn(i)
     lf.finish_syncs(mode="full")
+    out = [f"// {name}: {first:#x}..{last:#x}, MINA4MAC_TSO={tso}", f"void T_{name}(CPU *restrict c) {{"] + lf.prologue()
     out.extend(lf.lines)
     out.append("}")
     return out
