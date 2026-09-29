@@ -251,9 +251,34 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     change is a few lines, it removes code, and the check build found no violation.
   - check.sh ok (seed 9483; the launcher step hit the known agent-launch stall). Determinism not rerun: the change
     only skips reloads, and the check build compares every skipped one at run time.
-- [ ] Main-thread parallelism, if the main thread is the bottleneck while the job workers idle: check whether the
+- [x] Main-thread parallelism, if the main thread is the bottleneck while the job workers idle: check whether the
   game has work it could hand to its job system that the recompiled build serializes (a scheduling or HLE effect,
   as in PLAN3 Phase 9), not changes to the game's own design.
+  - 2026-09-29, **nothing to hand off: main's work is serial by the game's design, not by us.** A joblog run of the
+    jungle at c7895d0 (`MINA4MAC_JOBLOG`, build/joblog/jungle{.txt,_frames.txt,.report.txt,_bench.txt}; 50.9 fps with
+    the logger on) and PROFILE.md "Jungle: job system":
+    - Main waits in job barriers for only 1.58 ms a frame (8% of its wall time, 11.7 barriers). The jobs total
+      10.5 ms a frame over both pools (0.53 cores; heavy: 125 ms, 4.3 cores). Main's frame work is 15.7 ms, of which
+      13.1 ms is on-CPU (the game's own serial code: entity systems, main's part of the world update, render) and
+      2.6 ms off-CPU (the 1.6 ms of barrier naps, ~1 ms of Box2D spin-wait sleeps, preemption and GL). So even
+      waits of zero would give at most −16%, and the waits are the critical paths of real jobs.
+    - The chunk-update passes (`0x726a5e`, the heavy scene's 43% of main) are 0.8 ms a frame here. The game submits
+      one job per active chunk of the pass's checkerboard colour (up to a cap from the pool size, the rest inline on
+      main via `0x7288a0`), and the jungle has ~1 active chunk per pass: little is falling or flowing. The pool size
+      comes from our `GetSystemInfo` (10 CPUs), as on a 10-core Windows PC.
+    - The switches that could send work down a serial path are at their Windows defaults: `USE_CUSTOM_THREADPOOL`
+      (magic number, flag at 0x11511d2, default 1) selects the game's own pool at the three chunk-pass sites
+      (0x726446, 0x726654, 0x7268d2). ConcRT is only used for locks, events, condvars and the scheduler-id poll
+      (msvcr120_concrt.c), with no task scheduling to serialize. `BOX2D_THREAD_MAX_WAIT_IN_MS` (12) only gates a
+      check in `F_007174b0` against Box2D's last step time.
+    - Box2D's step (`0x9a26d0`, 2.9 ms median, p95 4.7 ms) runs on the second pool beside main's work. That's the
+      game's design. Since XMM in locals, `PhysicsBodySystem`, which holds main's wait for it, is 3.4% of main's
+      busy time (PROFILE.md "Jungle after XMM in locals").
+    - joblog.py's per-barrier "late" column counts any job that ended since main's previous wait, including the
+      Box2D step on the other pool, so with 1-job passes it reads 533 µs where the wait itself is 274 µs. It's only
+      meaningful for busy passes like heavy's.
+  - So the rest of Phase 16 is lifted-code speed on main: stack slots (next). The Lua bridge task stays dropped
+    (0.3% of busy samples).
 - [ ] Carried over from PLAN3 Phase 12: stack slots and arguments in C locals (a per-frame escape analysis like
   regsum.py's, plus a check mode). The largest and riskiest item: only if the profile shows the lifted code's memory
   traffic, not a specific subsystem, as the cost.

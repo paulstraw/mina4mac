@@ -263,3 +263,23 @@ Main thread, % of its busy samples (scratch script over perfprof.parse; before �
   is mostly waiting that `sample` sees as busy.
 - So main's own work is a long tail of ordinary lifted code with no single subsystem left to target. What's left in
   Phase 16 is lifted-code speed across the board (vcall reloads, stack slots) and main-thread parallelism.
+
+## Jungle: job system (PLAN4 Phase 16)
+
+Taken 2026-09-29 at c7895d0, `SCENE=jungle MINA4MAC_JOBLOG=… tools/perfbench.sh run mina4mac`, summarized with
+`tools/joblog.py --framelog`: `build/joblog/jungle*.txt`. The run: 50.9 fps with the logger on, work_ms 15.6.
+
+| per frame | jungle | heavy (PLAN3, nap20) |
+|---|---|---|
+| main in job barriers | 1.58 ms (8%) | 13.95 ms (47%) |
+| of which the chunk-update barrier (`0x726a5e`) | 0.80 ms, ~1 job a pass | 12.6 ms, 30 jobs a pass |
+| jobs, job time | 168, 10.5 ms (0.53 cores) | 424, 125.5 ms (4.3 cores) |
+| main's frame work: on-CPU / off-CPU | 13.1 / 2.6 ms | – |
+| largest job types | `0x9a29b0` 112 × 33 µs (4.0 ms), Box2D step `0x9a26d0` 1 × 2.9 ms | `0x9b0bd0` (cells) |
+
+- The job system is nearly idle, and main barely waits for it. Main's frame is its own serial work, the game's
+  design: the entity systems, main's part of the world update, and render all run on the main thread. Neither our
+  pool size (`GetSystemInfo`: 10 CPUs), `USE_CUSTOM_THREADPOOL` (default 1) nor the ConcRT HLE (no task scheduling)
+  sends any of it down a serial path.
+- Even a main thread that never waited would gain at most the 2.6 ms off-CPU (−16%), and those waits are the
+  critical paths of real jobs. What's left to speed up is the lifted code main runs.
