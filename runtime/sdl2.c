@@ -307,7 +307,8 @@ HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
 }
 
 // MINA4MAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
-// time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title.
+// time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title. The
+// stderr line ends with the playtest mod's latest telemetry (lua_telemetry), if it runs.
 static void count_frame(SDL_Window *w) {
     static int on = -1, frames;
     static uint64_t last, t0;
@@ -326,7 +327,10 @@ static void count_frame(SDL_Window *w) {
     double span = (double)(now - t0) / hz;
     if (span < 1) return;
     double fps = frames / span;
-    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms\n", fps, span * 1000 / frames, worst);
+    char tel[256];
+    lua_telemetry(tel, sizeof tel);
+    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms%s%s\n", fps, span * 1000 / frames, worst,
+            tel[0] ? ", " : "", tel);
     if (w) {
         const char *cur = SDL_GetWindowTitle(w);
         if (!title[0] || strncmp(cur, title, strlen(title))) {  // the game's own title, before our suffix

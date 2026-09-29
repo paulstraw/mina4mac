@@ -1,0 +1,5 @@
+<Mod
+	name="mina4mac_telemetry"
+	description="mina4mac playtest telemetry: once a second, reports the biome, position and entity counts at the player to mina4mac's fps log (does nothing in other builds)"
+>
+</Mod>

@@ -23,3 +23,7 @@ int utf16_to_utf8(uint32_t ws, char *out, size_t n);
 // Convert UTF-8 to UTF-16 in guest memory at `out`, room for `cap` units including the NUL. Returns the
 // length in units without the NUL, or if it doesn't fit (nothing written) the needed size including it.
 uint32_t utf8_to_utf16(const char *s, uint32_t out, uint32_t cap);
+
+// The last line a mod passed to the host Lua function mina4mac_telemetry(s) (lua51.c; the playtest mod,
+// tools/telemetry), copied into out ("" if none). MINA4MAC_FPS appends it to each [fps] line.
+void lua_telemetry(char *out, size_t n);

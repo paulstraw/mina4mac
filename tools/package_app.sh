@@ -4,19 +4,23 @@
 # msvcp120.dll, then wraps build/mina4mac in an app bundle that runs the game from that install (it copies
 # no game files; binaries and data/ are read in place, and logger.txt is written there, as on Windows).
 # Saves live under ~/Library/Application Support/mina4mac/. The launcher log goes to ~/Library/Logs/mina4mac.log.
-# Usage: tools/package_app.sh [--no-build] [--fps] [install dir]
+# Usage: tools/package_app.sh [--no-build] [--fps] [--telemetry] [install dir]
 #   install: $NOITA_SRC, default the Sikarugir Wine prefix's GOG install (as tools/setup_game.sh)
 #   output: $MINA4MAC_APP, default build/Noita.app (gitignored; copy it anywhere, e.g. ~/Applications)
 #   --no-build: reuse the existing build/mina4mac (it must have been built from the same exe)
 #   --fps: the app shows fps and the worst frame time in the window title (MINA4MAC_FPS=1; not in fullscreen)
+#   --telemetry: --fps, plus the playtest mod tools/telemetry, installed into the install's mods/ and enabled in
+#     the app's save, so each [fps] line in the log also names the frame, biome, position and nearby entities
+#     (the game drops mods it can't find from the save's list, so run this again after benchmark runs in build/game)
 # Bundles Homebrew's SDL2 and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-BUILD=1 FPS=
+BUILD=1 FPS= TELEMETRY=0
 while [ $# -gt 0 ]; do
     case "$1" in
     --no-build) BUILD=0 ;;
     --fps) FPS='export MINA4MAC_FPS="${MINA4MAC_FPS:-1}"' ;;
+    --telemetry) FPS='export MINA4MAC_FPS="${MINA4MAC_FPS:-1}"' TELEMETRY=1 ;;
     *) break ;;
     esac
     shift
@@ -116,3 +120,26 @@ codesign -s - -f "$TMP"
 rm -rf "$APP"
 mv "$TMP" "$APP"
 echo "$APP: game $SRC, FMOD $fmod ($(du -sh "$APP" | cut -f1))"
+
+# The app's save (AppData under ~/Library/Application Support/mina4mac, as runtime/shell32.c maps it).
+SAVE="$HOME/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita/save00/mod_config.xml"
+if [ $TELEMETRY = 1 ]; then
+    rsync -a --delete tools/telemetry/ "$SRC/mods/mina4mac_telemetry/"
+    if [ ! -f "$SAVE" ]; then
+        echo "telemetry: installed, but there is no $SAVE yet: start the app once, quit, and run this again"
+    elif grep -q 'name="mina4mac_telemetry"' "$SAVE"; then
+        sed -i '' -E 's/<Mod enabled="[01]" name="mina4mac_telemetry"/<Mod enabled="1" name="mina4mac_telemetry"/' "$SAVE"
+    else
+        sed -i '' 's#</Mods>#  <Mod enabled="1" name="mina4mac_telemetry" settings_fold_open="0" workshop_item_id="0" >\
+  </Mod>\
+</Mods>#' "$SAVE"
+    fi
+    echo "telemetry: mods/mina4mac_telemetry in $SRC, enabled in the app's save"
+fi
+# The benchmark mods pin the seed (perfbench also floods the world): tools/perfbench.sh enables its mod only
+# while it runs, but a killed run can leave it on; seedprint stays on until tools/determinism.sh remove.
+for m in perfbench seedprint; do
+    [ -d "$SRC/mods/$m" ] && grep -q "<Mod enabled=\"1\" name=\"$m\"" "$SAVE" 2>/dev/null &&
+        echo "warning: the $m mod is installed in $SRC and enabled in the app's save (disable it in the mod menu or with its tool's remove)"
+done
+true

@@ -115,10 +115,24 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
     job wait, is where the frame goes. Phase 15 should start from the main thread's profile.
   - The scene's first two runs (45.2 and 43.6 fps, work_ms 16.6 / 18.0) fall inside this batch's range, so the
     scene is repeatable to about ±4% fps; compare fixes only inside one interleaved batch, as before.
-- [ ] Playtest telemetry (moved after Phase 15 on 2026-09-28: the profile decides what comes next; this only has
+- [x] Playtest telemetry (moved after Phase 15 on 2026-09-28: the profile decides what comes next; this only has
   to be done before the next playtest): make it cheap to locate the next report. Either the fps line also carries the biome and
   entity count (from a tiny always-on mod writing to a file, or from guest state), or a separate `--telemetry`
   packaging option. Keep it off the hot path (once a second).
+  - 2026-09-29 (with Phase 17): `tools/package_app.sh --telemetry` (implies `--fps`) installs the mod
+    `tools/telemetry` into the install's `mods/` and enables it in the app's save. Once a second of game time it
+    calls `mina4mac_telemetry(s)`, a host global that `runtime/lua51.c` adds to every Lua state (all three ways
+    the base library gets opened), and the `[fps]` line ends with the latest one:
+    `[fps] 60.0 fps, frame avg 16.67 ms, worst 25.05 ms, f 3720, _EMPTY_ at 227,-86, entities 327, enemies 30`
+    (frame, `BiomeMapGetName` at the player, position, entities and `enemy`-tagged ones within 1024 px, as the
+    perfbench scenes count them). No file I/O, so it works with the mod sandbox on; under Wine the global doesn't
+    exist and the mod does nothing.
+  - Found on the way: perfbench stayed enabled in the mina4mac save after `perfbench.sh install`, and the packaged
+    app shares that save and runs from the Wine install, which has `mods/perfbench`, so playing the app would have
+    started a benchmark (pinned seed, flood). `perfbench.sh run` now enables the mod only for the run (restored on
+    exit, like the Program Flags); `install` no longer enables it. The packager warns if perfbench or seedprint is
+    enabled in the app's save. The game drops mods it can't find from the save's list on exit, so benchmark runs in
+    build/game drop the telemetry entry: rerun the packager before a playtest.
 
 ### Phase 15: find the cost
 
@@ -137,8 +151,10 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
   - `MINA4MAC_QOS=interactive`: jungle work_ms −8.2% (18.1 → 16.6, fps 44.0 → 46.0, disjoint ranges), heavy +0.4%
     (noise; 48.2 vs 48.1 fps). build/perfab_{jungle,heavy}_qos.log.
   - Lua is 0.4% of busy samples and dispatch 1.7%, so the next two tasks have little to find (see Phase 16).
-- [ ] Count what the benchmarks didn't: Lua bridge calls and guest callbacks per frame (a counter build or a
+- [x] Count what the benchmarks didn't: Lua bridge calls and guest callbacks per frame (a counter build or a
   `MINA4MAC_*` knob in `runtime/lua51.c`), and the cost per call. Entities alive per frame, from the mod.
+  - Dropped 2026-09-29: Lua is 0.3–0.4% of busy samples in both jungle profiles, so there's no cost to count.
+    Entity counts near the player are in the perfbench progress lines (Phase 14) and the playtest telemetry.
 - [x] Indirect calls in the jungle: run the `--icprof` counting build on the jungle scene and compare with the
   flood/heavy profile. How many of its hot sites are uncached, and what share of its indirect calls miss a cache?
   - 2026-09-29 (done with the Phase 16 inline-cache task, build/icj/): 5.0e9 indirect calls over 23.1k sites (heavy
@@ -216,7 +232,7 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     and heavy doesn't lose. Kept.
   - check.sh ok (seed 29486; the launcher ran its 300 s into a world). Determinism not rerun: only which sites get a
     cache changed, and a cache miss still goes through `guest_call` to the same target.
-- [ ] Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in
+- [x] Dropped (Phase 15 doesn't show it: Lua 0.3–0.4% of busy samples). Lua bridge overhead, if Phase 15 shows it: shortcut the hot `lua_*` entry points, avoid per-call setup in
   `call_guest` callbacks, check that LuaJIT's JIT is on for the game's scripts and isn't aborting traces on the
   bridge's C functions.
 - [x] Register summaries for vcall targets: where an inline cache or a constant vtable names the target, use its
@@ -323,7 +339,37 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
 
 ### Phase 17: wrap up
 
-- [ ] Final numbers for all three scenes (flood, heavy, jungle), native vs Wine, capped, with work_ms and cpu_ms, as in
+- [x] Final numbers for all three scenes (flood, heavy, jungle), native vs Wine, capped, with work_ms and cpu_ms, as in
   PLAN3 Phase 13. Record what each kept change contributed.
+  - 2026-09-29, 3 rotated rounds per scene (plan3 → now → Wine, now → Wine → plan3, Wine → plan3 → now), medians
+    (min–max). **plan3** = PLAN3's final binary (5291766, `build/final/now`); **now** = HEAD (f0a7d3e, default
+    build: QoS interactive, XMM in locals, vcall ABI, 490 inline caches, slots off); **Wine** = the Sikarugir
+    wrapper. All capped at 60 Hz. Runs, `run.sh` and `summary.py`: build/final4/.
+
+    | scene | plan3 fps | now fps | Wine fps | now vs plan3 | now vs Wine | work_ms plan3 → now (p95) | main cpu_ms plan3 → now |
+    |---|---|---|---|---|---|---|---|
+    | jungle | 45.2 (42.1–45.4) | **46.1** (46.0–47.3) | 30.8 (29.6–31.4) | +2% | +50% | 17.75 → 16.68 (22.5 → 21.3), −6% | 15.26 → 14.13, −7% |
+    | heavy | 47.0 (46.2–49.1) | **49.8** (49.2–49.9) | 39.8 (39.5–40.3) | +6% | +25% | 16.48 → 15.63 (21.0 → 20.7), −5% | 8.75 → 8.87 |
+    | flood | 59.9 (59.9–59.9) | **59.9** (59.9–59.9) | 55.7 (54.1–56.2) | at the cap | +8% | 12.41 → 12.49 | 6.83 → 6.79 |
+
+    Jungle fps per 300 frames (median run): plan3 58.6 54.5 44.8 40.4 39.8 39.9, now 58.3 57.0 46.0 40.8 40.8 40.3,
+    Wine 36.1 34.2 27.7 29.4 29.5 29.5.
+  - **The goal (the jungle at 60) isn't reached.** The jungle is still a heavy scene for the game itself: Wine runs it
+    at 31 fps and never reaches 60 in any window; native is 50% ahead of Wine and holds 57–59 fps until the enemy
+    count passes ~100, then settles at ~40. Main's frame work (16.7 ms, 85% of it on-CPU) is the game's serial code
+    (Phase 16 joblog), spread flat over lifted functions, with nothing left above a few percent.
+  - **The kept changes don't add up.** Their own interleaved jungle A/Bs (work_ms): QoS −8.2%, XMM in locals
+    −11.9%, inline caches for three scenes −3.6%, vcall ABI noise (heavy −3.4%, main cpu −5.3%); compounded
+    that's about −22%, but plan3 → now in one batch is only −6%. Two things are at work. First, day-to-day
+    drift: plan3 is byte-identical to Phase 14's `now` (build/jungle_wine/now), which measured 43.3 fps and
+    19.1 ms on 09-28 against 45.2 fps and 17.75 ms today, while HEAD's 16.7 ms matches Phase 16's B sides
+    (16.0–16.8). The earlier A sides may have been measured on slow days. Second, overlap (a hypothesis, not
+    measured): QoS and XMM both shortened main's wait for Box2D's step (QoS schedules the Box2D thread sooner,
+    XMM makes the step faster), and once that wait is gone the second fix has nothing left to save. Only the
+    within-batch numbers above are comparable.
+  - Heavy (+6% fps, −5% work_ms) keeps what PLAN3 had and a little more; flood is at the cap for both (its capped
+    work_ms is idle headroom, see Phase 16 QoS).
+  - Not kept (noise in their A/Bs, or no gain): stack slots in locals (opt-in, `--slots on`), the Lua bridge
+    (dropped: 0.3% of busy samples), main-thread parallelism (the game's design; ruled out by joblog).
 - [ ] Rebuild `build/Noita.app` (with `--fps`, plus telemetry if Phase 14 added it) and have the user play through the
   jungle again. Match any dips against the log.

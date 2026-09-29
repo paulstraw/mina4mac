@@ -9,8 +9,9 @@
 # workers), cpu_ms its thread CPU time, swap_ms the time in the swap; median and p95 over the measured frames.
 # The game is started with `-no_logo_splashes -gamemode 0`, which skips the menu; each run first deletes the run in
 # progress in save00, so every run starts from a fresh world. Like tools/determinism.sh, install turns the mod
-# sandbox off (the mod writes a file) and remove turns it back on.
-#   tools/perfbench.sh install mina4mac|wine     copy + enable the mod (game not running)
+# sandbox off (the mod writes a file) and remove turns it back on. The mod is enabled only while a run goes on (the
+# packaged app shares the save and, for Wine's install, the mods), so playing the game doesn't start a benchmark.
+#   tools/perfbench.sh install mina4mac|wine     copy the mod in, sandbox off (game not running)
 #   tools/perfbench.sh run mina4mac|wine [out]   run the benchmark once, print the summary (and copy it to out);
 #                                                with UNCAPPED=1, vsync is off and the frame limit 1000 for the run
 #   tools/perfbench.sh remove mina4mac|wine      disable + delete it again
@@ -49,10 +50,9 @@ case "${1:-}" in
 install)
     dirs "${2:-}"
     rsync -a --delete tools/perfbench/ "$GAME/mods/perfbench/"
-    set_mod 1
     sed -i '' -E 's/mods_disclaimer_accepted="0"/mods_disclaimer_accepted="1"/; s/mods_sandbox_enabled="1"/mods_sandbox_enabled="0"/' \
         "$SAVE/save_shared/config.xml"
-    echo "installed and enabled perfbench in $GAME (save $SAVE)" ;;
+    echo "installed perfbench in $GAME (save $SAVE)" ;;
 remove)
     dirs "${2:-}"
     set_mod 0
@@ -78,7 +78,8 @@ run)
         # or an interrupted run would restore the config and then have the still-running game overwrite it)
         cleanup() { sed -i '' -E "s/ vsync=\"[0-9]+\"/$v/; s/ framerate=\"[0-9]+\"/$f/" "$CFG"; }
     fi
-    trap 'stop; cleanup' EXIT
+    set_mod 1
+    trap 'stop; cleanup; set_mod 0' EXIT
     if [ "$2" = mina4mac ]; then
         # shellcheck disable=SC2086
         MINA4MAC_FRAMELOG="$PWD/$GAME/perfbench_frames.txt" caffeinate -d -u "${MINA4MAC_BIN:-build/mina4mac}" "${ARGS[@]}" ${MINA4MAC_ARGS:-} >"$log" 2>&1 &
@@ -89,7 +90,7 @@ run)
         # "Program Flags" set for this run only (restored on exit), and stop it with wineserver -k.
         W="$APP/Contents/SharedSupport/wine"
         plutil -replace "Program Flags" -string "${ARGS[*]}" "$APP/Contents/Info.plist"
-        trap 'stop; plutil -replace "Program Flags" -string "" "$APP/Contents/Info.plist"; cleanup' EXIT
+        trap 'stop; plutil -replace "Program Flags" -string "" "$APP/Contents/Info.plist"; cleanup; set_mod 0' EXIT
         open "$APP"
         pid=
         # the game process itself ("C:\GOG Games\Noita\noita.exe ..."), not wine's short-lived helper processes

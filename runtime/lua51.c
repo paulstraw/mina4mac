@@ -192,6 +192,31 @@ static int open_lib(lua_State *L, int lib, lua_CFunction open) {
     sandbox_wrap_extras(L, lib);
     return n;
 }
+// mina4mac_telemetry(s), a global in every state (opened with the base library): keeps s for lua_telemetry.
+// The playtest mod (tools/telemetry) calls it once a second with the biome and entity counts at the player.
+static os_unfair_lock TELEMETRY_LOCK = OS_UNFAIR_LOCK_INIT;
+static char TELEMETRY[256];
+static int telemetry(lua_State *L) {
+    const char *s = luaL_checkstring(L, 1);
+    os_unfair_lock_lock(&TELEMETRY_LOCK);
+    snprintf(TELEMETRY, sizeof TELEMETRY, "%s", s);
+    os_unfair_lock_unlock(&TELEMETRY_LOCK);
+    return 0;
+}
+void lua_telemetry(char *out, size_t n) {
+    os_unfair_lock_lock(&TELEMETRY_LOCK);
+    snprintf(out, n, "%s", TELEMETRY);
+    os_unfair_lock_unlock(&TELEMETRY_LOCK);
+}
+static void add_telemetry(lua_State *L) {
+    lua_pushcfunction(L, telemetry);
+    lua_setfield(L, LUA_GLOBALSINDEX, "mina4mac_telemetry");
+}
+static int open_base(lua_State *L) {
+    int r = luaopen_base(L);
+    add_telemetry(L);
+    return r;
+}
 static int open_io(lua_State *L) { return open_lib(L, SB_IO, luaopen_io); }
 static int open_os(lua_State *L) { return open_lib(L, SB_OS, luaopen_os); }
 static int open_package(lua_State *L) { return open_lib(L, SB_PACKAGE, luaopen_package); }
@@ -200,7 +225,7 @@ static int open_ffi(lua_State *L) { return open_lib(L, SB_FFI, luaopen_ffi); }
 
 // Host functions for the imported lua51 functions the guest may push as C functions.
 static const struct { const char *name; lua_CFunction fn; } OPENERS[] = {
-    {"luaopen_base", luaopen_base}, {"luaopen_table", luaopen_table}, {"luaopen_string", luaopen_string},
+    {"luaopen_base", open_base}, {"luaopen_table", luaopen_table}, {"luaopen_string", luaopen_string},
     {"luaopen_math", luaopen_math}, {"luaopen_bit", luaopen_bit}, {"luaopen_jit", luaopen_jit},
     {"luaopen_io", open_io}, {"luaopen_os", open_os}, {"luaopen_package", open_package},
     {"luaopen_debug", open_debug}, {"luaopen_ffi", open_ffi},
@@ -230,6 +255,7 @@ HOST_CDECL(lua51, luaL_openlibs) {
         if (sandbox_patched(SANDBOX_THUNK[i])) sandbox_abort(SANDBOX[i].open);  // luaL_openlibs would open it
     lua_State *L = LS(0);
     luaL_openlibs(L);
+    add_telemetry(L);
     for (int i = 0; i < NSB; i++) {
         lua_getfield(L, LUA_GLOBALSINDEX, SANDBOX[i].lib);
         sandbox_wrap(L, -1, i);
@@ -249,7 +275,7 @@ HOST_CDECL(lua51, luaL_openlibs) {
         pthread_once(&THUNKS_ONCE, thunks_init);                                                      \
         ret_i32(c, fn(LS(0)));                                                                        \
     }
-OPENER(base, luaopen_base)
+OPENER(base, open_base)
 OPENER(table, luaopen_table)
 OPENER(string, luaopen_string)
 OPENER(math, luaopen_math)

@@ -38,6 +38,11 @@ static uint32_t call(CPU *c, const char *name, int n, const uint32_t *args) {
 #define SDL(name, ...) call(&c, name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__})
 #define SDL0(name) call(&c, name, 0, NULL)
 
+// lua51.c's (not linked here: it needs LuaJIT); sdl2.c's fps line asks it for the playtest telemetry.
+void lua_telemetry(char *out, size_t n) {
+    if (n) out[0] = 0;
+}
+
 static uint32_t gs(const char *s) { return guest_strdup(s); }
 static int gstreq(uint32_t p, const char *s) { return p && !strcmp((char *)P(p), s); }
 
