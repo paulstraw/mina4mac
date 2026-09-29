@@ -2,7 +2,8 @@
 # Performance benchmark, the same scene in mina4mac and in the Wine build: tools/perfbench is a mod that pins
 # WORLD_SEED, floods the start area with water, oil and lava 1 s after spawning, then logs the real time of 1800
 # frames and writes a summary (fps, frame-time percentiles, fps per 300 frames) to <game dir>/perfbench.txt.
-# SCENE=heavy picks the heavier scene (twice the flood, physics props, TNT); the default is SCENE=flood. For
+# SCENE=heavy picks the heavier scene (twice the flood, physics props, TNT), SCENE=jungle a busy scene (waves of
+# enemies, fire and TNT in the Underground Jungle); the default is SCENE=flood. For
 # mina4mac the run also reports the main thread's per-frame CPU side from MINA4MAC_FRAMELOG (runtime/sdl2.c):
 # work_ms is the wall time from one swap's return to the next swap (vsync-independent, includes waits for job
 # workers), cpu_ms its thread CPU time, swap_ms the time in the swap; median and p95 over the measured frames.
@@ -117,6 +118,7 @@ run)
     fi
     tr -d '\r' <"$GAME/perfbench.txt" | sed 's/^PERFBENCH //'
     [ -z "${3:-}" ] || tr -d '\r' <"$GAME/perfbench.txt" >"$3"
-    grep -q "PERFBENCH done" "$GAME/perfbench.txt" || { echo "(incomplete; log: $log)"; exit 1; } ;;
-*) sed -n '2,19p' "$0"; exit 2 ;;
+    grep -q "PERFBENCH done" "$GAME/perfbench.txt" || { echo "(incomplete; log: $log)"; exit 1; }
+    ! grep -q "PERFBENCH fail" "$GAME/perfbench.txt" || { echo "(the scene failed)"; exit 1; } ;;
+*) sed -n '2,20p' "$0"; exit 2 ;;
 esac

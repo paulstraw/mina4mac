@@ -67,7 +67,25 @@ The goal: find out what makes the jungle (and busy, mob-heavy scenes in general)
 
 ### Phase 14: reproduce it
 
-- [ ] A jungle benchmark scene (`SCENE=jungle` in `tools/perfbench/init.lua`).
+- [x] A jungle benchmark scene (`SCENE=jungle` in `tools/perfbench/init.lua`).
+  - Biome map row 27 (`data/biome_impl/biome_map.png`, 512 px a pixel, x0 = column 35, y0 = row 14) is
+    `rainforest.xml` from x −2560 to 2047, y 6656–7167. The scene teleports the protected player to (−768, 6912)
+    at frame 60, moves it to the nearest open spot at 180 (−720, 6928), logs `BiomeMapGetName` there and writes
+    `fail …` (perfbench.sh exits 1) unless it is `$biome_rainforest`. Enemy waves from `rainforest.lua`'s list: 30
+    at frame 200, then 12 more every 300 frames; `circle_fire` and a TNT box on alternating sides every 150. It
+    measures frames 360–2160. The per-300-frame lines now carry the entities and `enemy`-tagged entities within
+    1024 px (all scenes).
+  - First try (18 enemies, then 9 every 600 frames, fire every 300): 58.0, 47.7, then 3 more runs at 57–58.5 fps,
+    work_ms 13.7–14.3 ms. It only dipped for one 5 s window in some runs, so not busy enough (the user, watching:
+    "way better than the perf I was seeing").
+  - Crossing the jungle row at 2 px/frame (streaming in new world, same waves) was lighter still: 58.5 fps, work_ms
+    13.1, enemies near the player falling 67 → 22 as it left them behind. World streaming isn't the dip; not kept.
+  - Kept version, 2 runs (build/jungle_b1.txt, b2): fps per 300 frames 57.5 56.5 49.3 41.1 39.8 35.7 and
+    57.6 54.1 41.1 41.1 38.1 37.4 (the playtest: 38–57); work_ms median 16.6 / 18.0 (p95 23.2 / 24.5), cpu_ms
+    14.2 / 15.3. Enemies within 1024 px grow 88 → 138, entities 393 → 663. It gets slower as the enemies pile up,
+    so the later windows are the ones to watch. Unlike heavy (capped: work_ms 16.2, cpu_ms 8.4), main-thread
+    cpu_ms is close to work_ms, so the main thread's own work, not the job wait, looks like the cost (Phase 15 will
+    tell).
   - Pin the seed as the other scenes do, and teleport the (protected) player into the Underground Jungle. Find the
     coordinates for the pinned seed (the biome map, or `BiomeMapGetName` at the target point) and log the biome name
     at the start, so a wrong spot fails loudly instead of benchmarking the wrong place.
