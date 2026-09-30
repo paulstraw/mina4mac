@@ -7,7 +7,7 @@ DLLs: SDL2, OpenGL, LuaJIT and FMOD are bridged to their macOS versions.
 ## What you need
 
 - A Mac with Apple Silicon (M1 or later), macOS 14 or later, and a few GB of free disk space.
-- Noita for Windows from GOG, the build of Jan 25 2025. See [Supported builds](#supported-builds).
+- Noita for Windows from GOG, the build of Jan 25 2025 (version `20250125-1640` on GOG). See [Supported builds](#supported-builds).
 - About 15 minutes, most of it waiting for the build.
 
 This repository contains no game code or assets, so there's no download-and-play app: you build `Noita.app`
@@ -124,7 +124,7 @@ prefix). Back up both sides first.
 
 ## Supported builds
 
-Only the GOG build of Jan 25 2025 is supported, and step 5 refuses any other `noita.exe`. The Steam version is a
+Only the GOG build of Jan 25 2025 (listed on GOG as version `20250125-1640`) is supported, and step 5 refuses any other `noita.exe`. The Steam version is a
 different binary and doesn't work. When Noita is patched, the runtime has to be updated for the new build before it
 works, so keep a copy of the supported game folder (and its installer).
 
