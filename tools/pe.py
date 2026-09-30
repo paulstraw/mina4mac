@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pefile
 
-# Gitignored copy of the game binaries from the user's own install (see PLAN.md).
+# Gitignored copy of the game binaries from the user's own install (see docs/PLAN.md).
 DEFAULT_GAME_DIR = Path(__file__).parent.parent / "build/game"
 
 

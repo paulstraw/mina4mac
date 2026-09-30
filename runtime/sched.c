@@ -1,5 +1,5 @@
 // Scheduling knobs (sched.h). The M1 Max has 8 performance and 2 efficiency cores; jobs that land on an E-core
-// run several times slower and become the tail of the game's chunk-update passes (PROFILE.md "Job system").
+// run several times slower and become the tail of the game's chunk-update passes (docs/PROFILE.md "Job system").
 #include "sched.h"
 
 #include <pthread.h>

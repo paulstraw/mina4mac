@@ -6,7 +6,7 @@
 //   MINA4MAC_YIELD=nap<us>|usleep|sched|spin      Sleep(0)/_Thrd_yield: usleep(<us>) (default nap20), usleep(0),
 //                                                   sched_yield, or a short spin of yield instructions then
 //                                                   sched_yield
-// The defaults are what won the PLAN3 Phase 9 A/Bs (PROFILE.md "Scheduling"): all CPUs and nap20; user-interactive
+// The defaults are what won the PLAN3 Phase 9 A/Bs (docs/PROFILE.md "Scheduling"): all CPUs and nap20; user-interactive
 // QoS won PLAN4 Phase 16's (jungle work_ms -8.2%).
 #pragma once
 #include <stdint.h>
