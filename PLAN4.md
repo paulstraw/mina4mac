@@ -373,3 +373,9 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     (dropped: 0.3% of busy samples), main-thread parallelism (the game's design; ruled out by joblog).
 - [ ] Rebuild `build/Noita.app` (with `--fps`, plus telemetry if Phase 14 added it) and have the user play through the
   jungle again. Match any dips against the log.
+  - 2026-09-29, first session (`--telemetry`, 13e5882): "some okay runs, but no jungle yet". The log (last launch
+    only: the launcher overwrites it) has 754 s over three runs, through coalmine, excavationsite, snowcave and
+    snowcastle. 60 fps in all but 12 seconds. 6 of those are "no player" (death, then the new game loading: 26–40 fps,
+    one 600 ms frame); 1 is the new game's first second; the other 5 (47–55 fps, worst frame 42–83 ms) are each a
+    single second on arriving in a Holy Mountain (40–58 enemies within 1024 px). No gameplay dip longer than a second
+    so far. Still open: a run into the jungle.
