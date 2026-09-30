@@ -75,20 +75,33 @@ cost is ours to cut.
 
 ### Phase 18: better eyes on playtests
 
-- [ ] Per-second main-thread split in the `[fps]` line of the packaged app: the median `work_ms` and `cpu_ms` of
+- [x] Per-second main-thread split in the `[fps]` line of the packaged app: the median `work_ms` and `cpu_ms` of
   the second (the numbers `MINA4MAC_FRAMELOG` writes per frame, aggregated in `runtime/sdl2.c`, no file I/O).
   cpu close to work = main's own work (jungle-like); cpu well below work = main waits for the job workers
   (cell-simulation-like). Only with `--fps`/`--telemetry`; check the flood scene's fps is unchanged.
-- [ ] More telemetry counters, still once a second: physics bodies near the player (entities with a
+  - 2026-09-29: averages rather than medians (no per-frame storage): `main work 12.11 ms, cpu 5.05 ms` after the
+    frame times. Two clock reads per frame, only when `MINA4MAC_FPS` or `MINA4MAC_FRAMELOG` is set, so perfbench
+    (no `MINA4MAC_FPS`) and plain play are unchanged; no flood run needed. At the start area of a new game: work
+    12–13 ms, cpu ~5 ms, so main waits ~7 ms a frame for the workers there.
+- [x] More telemetry counters, still once a second: physics bodies near the player (entities with a
   `PhysicsBodyComponent` or `PhysicsBody2Component`, or a cheap tag-based stand-in), projectiles (`projectile`
   tag), and the polymorphed player (find it via the `polymorphed_player` tag or similar, so the position and
   counts keep working instead of "no player"). Look for a cheap Lua-visible count of burning or moving cells; if
   there's none, say so and skip it.
-- [ ] `tools/playprof.sh`: sample the running `Noita.app` (its `mina4mac` binary) for 20 s and summarize with
+  - 2026-09-29: `bodies` (entities within 1024 px with a `PhysicsBodyComponent` or `PhysicsBody2Component`; loose
+    terrain cut into rigid bodies isn't an entity, so it doesn't show), `projectiles` (tag), and `poly` after the
+    position when the player is found by `polymorphed_player` (not tested in a polymorph yet). No Lua-visible count
+    of burning or moving cells found; skipped. Start area: `entities 290, enemies 47, bodies 38, projectiles 0`.
+- [x] `tools/playprof.sh`: sample the running `Noita.app` (its `mina4mac` binary) for 20 s and summarize with
   `tools/perfprof.py` into `build/playprof/<time>/`, so "it's slow right now" becomes a profile without stopping
   the game. Check that perfprof.py's buckets work against the app binary (symbols, path).
-- [ ] Log retention: the launcher keeps two launches. Keep more (e.g. the last 5), or have the packager print a
+  - 2026-09-29: samples the newest `mina4mac` process, keeps the `[fps]` lines logged meanwhile (`fps.txt`), then
+    runs perfprof.py. Tested on the packaged app in a new game: buckets and threads come out as for perfbench runs
+    (build/playprof/20260929-224813). Sampling every 5 ms costs ~10% fps while it runs (60 → 53); the `[fps]`
+    lines show it, so read them with that in mind.
+- [x] Log retention: the launcher keeps two launches. Keep more (e.g. the last 5), or have the packager print a
   reminder, so a playtest isn't lost to a relaunch.
+  - 2026-09-29: the launcher keeps `mina4mac.log.1` (newest) to `.5`; README updated. check.sh ok (seed 9031).
 
 ### Phase 19: the scenario sweep
 

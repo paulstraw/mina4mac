@@ -308,14 +308,21 @@ HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
 
 // MINA4MAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
 // time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title. The
-// stderr line ends with the playtest mod's latest telemetry (lua_telemetry), if it runs.
-static void count_frame(SDL_Window *w) {
-    static int on = -1, frames;
-    static uint64_t last, t0;
-    static double worst;
-    static char title[256];
+// stderr line also has the main thread's average work and cpu per frame (as MINA4MAC_FRAMELOG measures them:
+// cpu close to work means main's own work, cpu well below it means main waits for the job workers) and ends with
+// the playtest mod's latest telemetry (lua_telemetry), if it runs.
+static int fps_on(void) {
+    static int on = -1;
     if (on < 0) on = getenv("MINA4MAC_FPS") && strcmp(getenv("MINA4MAC_FPS"), "0");
-    if (!on) return;
+    return on;
+}
+
+static void count_frame(SDL_Window *w, double work, double cpu) {
+    static int frames;
+    static uint64_t last, t0;
+    static double worst, work_sum, cpu_sum;
+    static char title[256];
+    if (!fps_on()) return;
     uint64_t now = SDL_GetPerformanceCounter(), hz = SDL_GetPerformanceFrequency();
     if (!last) {
         last = t0 = now;
@@ -323,14 +330,15 @@ static void count_frame(SDL_Window *w) {
     }
     double ms = (now - last) * 1000.0 / hz;
     last = now, frames++;
+    work_sum += work, cpu_sum += cpu;
     if (ms > worst) worst = ms;
     double span = (double)(now - t0) / hz;
     if (span < 1) return;
     double fps = frames / span;
     char tel[256];
     lua_telemetry(tel, sizeof tel);
-    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms%s%s\n", fps, span * 1000 / frames, worst,
-            tel[0] ? ", " : "", tel);
+    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms, main work %.2f ms, cpu %.2f ms%s%s\n", fps,
+            span * 1000 / frames, worst, work_sum / frames, cpu_sum / frames, tel[0] ? ", " : "", tel);
     if (w) {
         const char *cur = SDL_GetWindowTitle(w);
         if (!title[0] || strncmp(cur, title, strlen(title))) {  // the game's own title, before our suffix
@@ -341,7 +349,7 @@ static void count_frame(SDL_Window *w) {
         snprintf(buf, sizeof buf, "%s | %.0f fps, worst %.1f ms", title, fps, worst);
         SDL_SetWindowTitle(w, buf);
     }
-    t0 = now, frames = 0, worst = 0;
+    t0 = now, frames = 0, worst = work_sum = cpu_sum = 0;
 }
 
 // MINA4MAC_FRAMELOG=<file> appends one line per frame, "f <work ms> <cpu ms> <swap ms>": work is the main thread's
@@ -361,20 +369,20 @@ HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *win
         const char *path = getenv("MINA4MAC_FRAMELOG");
         fd = path && *path ? open(path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
     }
+    int timed = fd >= 0 || fps_on();
     double wall = 0, cpu = 0;
-    if (fd >= 0) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    if (timed) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
     SDL_Window *w = sdl_host(ARG(0));
     uint64_t j0 = joblog_on ? joblog_now() : 0;
     SDL_GL_SwapWindow(w);
     if (joblog_on) joblog_frame(j0, joblog_now());
-    count_frame(w);
-    if (fd >= 0) {
-        double after = now_ms(CLOCK_MONOTONIC_RAW);
-        if (wall0) {
-            char line[64];
-            int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
-            if (write(fd, line, n) < 0) close(fd), fd = -1;
-        }
-        wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    if (!timed) return;
+    double after = now_ms(CLOCK_MONOTONIC_RAW);
+    count_frame(w, wall0 ? wall - wall0 : 0, wall0 ? cpu - cpu0 : 0);
+    if (fd >= 0 && wall0) {
+        char line[64];
+        int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
+        if (write(fd, line, n) < 0) close(fd), fd = -1;
     }
+    wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
 }
