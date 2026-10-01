@@ -13,7 +13,7 @@
 #   --telemetry: --fps, plus the playtest mod tools/telemetry, installed into the install's mods/ and enabled in
 #     the app's save, so each [fps] line in the log also names the frame, biome, position and nearby entities
 #     (the game drops mods it can't find from the save's list, so run this again after benchmark runs in build/game)
-# Bundles Homebrew's SDL2 and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
+# Bundles Homebrew's SDL2 (sdl2-compat, plus the SDL3 it loads) and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BUILD=1 FPS= TELEMETRY=0
@@ -67,6 +67,16 @@ cp -L "$sdl" "$C/Frameworks/"
 chmod u+w "$C/Frameworks/$(basename "$sdl")"
 install_name_tool -id "@executable_path/../Frameworks/$(basename "$sdl")" "$C/Frameworks/$(basename "$sdl")"
 install_name_tool -change "$sdl" "@executable_path/../Frameworks/$(basename "$sdl")" "$C/MacOS/mina4mac"
+# Homebrew's sdl2 is sdl2-compat, which dlopens SDL3 at runtime (not an otool dependency); among other places it
+# looks for @loader_path/libSDL3.dylib, so that is where SDL3 goes.
+if strings "$sdl" | grep -q '@loader_path/libSDL3.dylib'; then
+    sdl3=$(dirname "$sdl")/libSDL3.dylib
+    [ -f "$sdl3" ] || sdl3="$(brew --prefix sdl3)/lib/libSDL3.dylib"
+    [ -f "$sdl3" ] || { echo "$sdl is sdl2-compat, but there is no SDL3 to bundle (brew install sdl3)"; exit 1; }
+    cp -L "$sdl3" "$C/Frameworks/libSDL3.dylib"
+    chmod u+w "$C/Frameworks/libSDL3.dylib"
+    install_name_tool -id "@loader_path/libSDL3.dylib" "$C/Frameworks/libSDL3.dylib"
+fi
 fmod=no
 if [ -f build/fmod_api/lib/libfmodstudio.dylib ]; then
     cp build/fmod_api/lib/libfmod.dylib build/fmod_api/lib/libfmodstudio.dylib "$C/Frameworks/"
