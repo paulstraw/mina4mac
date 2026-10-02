@@ -262,7 +262,7 @@ def main():
     subprocess.run([*link, *common, str(GEN / "harness.o"), "-o", str(exe)], check=True)
     subprocess.run([*link, *common, str(GEN / "bench.o"), "-o", str(ROOT / "build/bench")], check=True)
     subprocess.run([*link, *common, *(str(GEN / (Path(n).stem + ".o")) for n in launcher),
-                    str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-o", str(ROOT / "build/mina4mac")], check=True)
+                    str(LUAJIT_LIB), *_sdl_config("--libs"), "-framework", "OpenGL", "-framework", "CoreVideo", "-o", str(ROOT / "build/mina4mac")], check=True)
     t3 = time.time()
     src_mb = sum(s.stat().st_size for s in chunk_srcs) / 1e6
     print(f"functions {len(starts):,} (stubbed {failed:,}); MINA4MAC_TSO={prog.tso_mode}; pgo {args.pgo or 'off'}{', order file' if args.order else ''}; -{args.opt}{', lto ' + args.lto if lto else ''}; {args.chunking} chunks; "

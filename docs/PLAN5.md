@@ -103,6 +103,60 @@ cost is ours to cut.
   reminder, so a playtest isn't lost to a relaunch.
   - 2026-09-29: the launcher keeps `mina4mac.log.1` (newest) to `.5`; README updated. check.sh ok (seed 9031).
 
+### Phase 18b: vsync pacing (inserted 2026-10-02, from an outside review)
+
+SDL's Cocoa GL backend (SDL2 2.32 and SDL3 3.4 alike) paces swaps itself from a display-link callback. With
+interval 1, `Cocoa_GL_SwapWindow` always waits for the *next* tick ("always wait here so we know we just hit a swap
+interval"), even if one passed while the frame was built, so a frame a little over budget waits a whole extra
+interval. The old framelogs show it: flood on the 100 Hz display had work+swap in two clumps, 8-12 and 18-22 ms.
+
+- [x] `MINA4MAC_VSYNC` in a hand-written `SDL_GL_SetSwapInterval` (runtime/sdl2.c; gen_sdl.py `HAND`): `late`
+  (first version; now `sdllate`) maps the game's interval 1 to -1 ("late swap tearing": wait only if no tick has
+  passed since the last swap; falls back to 1), `sdl` passes it through, `native` sets SDL's to 0 and the context's CGL swap interval to 1.
+  0 (vsync off in the settings) passes through. The launch log gets one `[vsync]` line per call (the game's first
+  call, before its context exists, fails in every mode). `tools/perfab.sh` now keeps each run's raw framelog.
+- [x] A/Bs, 3 rotated pairs per cell (2 for flood), sdl vs each mode, same binary; built-in display at 120 Hz,
+  then switched to 60 Hz. Runs in build/perfab/20261002-*, scripts in build/vsync/.
+
+  | display | scene | sdl fps | late fps | | sdl fps | native fps | |
+  |---|---|---|---|---|---|---|---|
+  | 120 Hz | jungle | 48.4 (47.1-49.8) | **57.9** (55.9-58.5) | +20% | 48.1 | 57.4 | +19% |
+  | 120 Hz | heavy | 48.6 (47.8-48.9) | **55.2** (54.9-55.3) | +14% | 47.5 | 55.5 | +17% |
+  | 60 Hz | jungle | 38.7 (37.5-47.4) | **55.3** (54.6-56.7) | +43% | 46.3 | 56.6 | +22% |
+  | 60 Hz | heavy | 41.5 (39.7-41.6) | **55.3** (54.8-55.7) | +33% | 41.7 | 54.3 | +30% |
+  | 60 Hz | flood | 59.3 | 59.9 | +1% | 59.4 | 59.9 | +1% |
+
+  - Jungle's late windows (600 frames, ~110+ enemies) went from 39-45 to 50-58 fps at 120 Hz. The 60 Hz sdl side
+    is the noisiest cell (a whole 16.7 ms tick per missed frame); late is tight everywhere.
+  - Flood stays at 59.9 with the 60 fps frame limit, on both displays: the game's own limiter holds 60, so the
+    simulation speed doesn't change. With the limit at 1000 (vsync on, 120 Hz), flood runs 59.7 sdl, 79.6 late,
+    78.5 native: CPU-bound below 120, so this doesn't show whether native waits for the display.
+  - work_ms is no longer a CPU-side number when a frame is under budget: the limiter's sleep moved out of the swap
+    and into it (flood +17-27%; jungle and heavy +1-8%, partly that, partly more frames per second). Compare
+    cpu_ms and fps in later A/Bs.
+  - Every earlier fps table (PLAN3/4, the Wine comparisons) was measured with sdl pacing.
+- [x] A hang with SDL's -1: 2 of 14 launches froze (check.sh's launcher at startup, and a plain launch 27 s into the
+  menu); 12 more launches, with and without the scripted clicks, hiding and switching away, didn't reproduce it.
+  The startup hang's sample: main thread in `Cocoa_GL_SwapWindow`'s condition wait, and no `CVDisplayLink` thread
+  left in the process: SDL's display link had stopped, and SDL waits for its tick with no timeout. Interval 1 waits
+  the same way (PLAN.md's "display asleep blocks the swap"), so it may not be specific to -1, but 2 of 14 against
+  0 of 3 can't tell.
+- [x] So `late` now paces in mina4mac: SDL's interval 0, our own `CVDisplayLink` counts ticks, and the swap
+  (hostcall `SDL_GL_SwapWindow`, inside the timed span so swap_ms still holds the wait) waits only if no tick has
+  passed since the last swap, for at most 3 refresh periods. After a timeout it swaps unpaced (the game's limit
+  holds 60) until the link ticks again, with a `[vsync] no display tick` line every 100 timeouts. The link
+  follows the window's display (checked every 64 swaps). `sdllate` keeps SDL's -1 for comparison. Links CoreVideo.
+  - Silent link, simulated with an lldb breakpoint that returns from the tick callback: the game kept running
+    (35 fps with a 25 ms wait per frame, before the unpaced fallback was added), no hang. The fallback itself
+    wasn't re-tested: two more lldb attempts didn't hold the breakpoint.
+  - A/B sdl vs own `late`, 3 rotated pairs (the display was at 60 Hz by then, not switched by us): heavy 37.9
+    (37.6-48.4) → **54.0** (52.9-55.2), +43%; jungle 37.0/41.9/45.8 → **55.1, 54.1** (the comparison gave up
+    after an sdl run stalled twice, max frame 1.1 s). The same as SDL's -1 at 60 Hz (55.3 both).
+  - **Default: own `late`**.
+- [ ] User playtest of the rebuilt `Noita.app` (`--telemetry`): frame pacing, tearing in fullscreen, the 60 cap,
+  and whether the snowcave 48 fps dip is gone. This likely answers Phase 20's "48.0 question": 48 is what interval-1
+  pacing on a 120 Hz display gives frames of ~17-25 ms.
+
 ### Phase 19: the scenario sweep
 
 All scenes: pinned seed, protected player teleported into snowcave (check `$biome_snowcave` at the spot, fail
