@@ -212,8 +212,15 @@ HOST_CDECL(SDL2, SDL_FreeSurface) {  // void SDL_FreeSurface(SDL_Surface *surfac
 // and sets its GL viewport right away. A macOS fullscreen Space leaves asynchronously and then restores its
 // own (screen-sized) frame, so the game drew 1280x720 into the corner of a huge window. Without Spaces,
 // SDL switches synchronously and restores the size the game asked for.
+//
+// Press-and-hold off, as on SDL2: Homebrew's SDL2 is sdl2-compat (the SDL2 ABI over SDL3), which starts text
+// input for new windows like SDL2 did but doesn't also disable macOS press-and-hold like SDL2 did
+// (libsdl-org/sdl2-compat#620). Holding a key with accented variants (a, d) then opens the accent menu, which
+// swallows key presses (TAB included) and withholds repeats until it closes a second later. The hint is SDL3's
+// name, which the compat passes through; SDL_HINT_DEFAULT, so an explicit SDL_MAC_PRESS_AND_HOLD still wins.
 __attribute__((constructor)) static void sdl_hints(void) {
     SDL_SetHintWithPriority(SDL_HINT_VIDEO_MAC_FULLSCREEN_SPACES, "0", SDL_HINT_DEFAULT);
+    SDL_SetHintWithPriority("SDL_MAC_PRESS_AND_HOLD", "0", SDL_HINT_DEFAULT);
 }
 
 // SDL_Event is 56 bytes on both sides and most members are laid out identically; tools/gen_sdl.py checks
