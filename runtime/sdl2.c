@@ -1,7 +1,13 @@
 // The SDL2 bridge's runtime half (sdl2.h): handles, surface mirrors, returned strings, and the imports
-// that don't fit tools/gen_sdl.py's generated thunks (SDL_PollEvent, SDL_FreeSurface).
+// that don't fit tools/gen_sdl.py's generated thunks (SDL_PollEvent, SDL_FreeSurface, SDL_GL_SwapWindow,
+// SDL_GL_SetSwapInterval).
 #include "sdl2.h"
 
+#define GL_SILENCE_DEPRECATION  // CGLSetParameter (MINA4MAC_VSYNC=native)
+#include <CoreVideo/CoreVideo.h>
+#include <OpenGL/OpenGL.h>
+#include <math.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <os/lock.h>
 #include <stddef.h>
@@ -315,14 +321,21 @@ HOST_CDECL(SDL2, SDL_PollEvent) {  // int SDL_PollEvent(SDL_Event *event)
 
 // MINA4MAC_FPS=1 counts frames at the swap: once a second, the frame rate and the average and worst frame
 // time (swap to swap, so vsync caps it at the display's refresh rate), on stderr and in the window title. The
-// stderr line ends with the playtest mod's latest telemetry (lua_telemetry), if it runs.
-static void count_frame(SDL_Window *w) {
-    static int on = -1, frames;
-    static uint64_t last, t0;
-    static double worst;
-    static char title[256];
+// stderr line also has the main thread's average work and cpu per frame (as MINA4MAC_FRAMELOG measures them:
+// cpu close to work means main's own work, cpu well below it means main waits for the job workers) and ends with
+// the playtest mod's latest telemetry (lua_telemetry), if it runs.
+static int fps_on(void) {
+    static int on = -1;
     if (on < 0) on = getenv("MINA4MAC_FPS") && strcmp(getenv("MINA4MAC_FPS"), "0");
-    if (!on) return;
+    return on;
+}
+
+static void count_frame(SDL_Window *w, double work, double cpu) {
+    static int frames;
+    static uint64_t last, t0;
+    static double worst, work_sum, cpu_sum;
+    static char title[256];
+    if (!fps_on()) return;
     uint64_t now = SDL_GetPerformanceCounter(), hz = SDL_GetPerformanceFrequency();
     if (!last) {
         last = t0 = now;
@@ -330,14 +343,15 @@ static void count_frame(SDL_Window *w) {
     }
     double ms = (now - last) * 1000.0 / hz;
     last = now, frames++;
+    work_sum += work, cpu_sum += cpu;
     if (ms > worst) worst = ms;
     double span = (double)(now - t0) / hz;
     if (span < 1) return;
     double fps = frames / span;
     char tel[256];
     lua_telemetry(tel, sizeof tel);
-    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms%s%s\n", fps, span * 1000 / frames, worst,
-            tel[0] ? ", " : "", tel);
+    fprintf(stderr, "[fps] %.1f fps, frame avg %.2f ms, worst %.2f ms, main work %.2f ms, cpu %.2f ms%s%s\n", fps,
+            span * 1000 / frames, worst, work_sum / frames, cpu_sum / frames, tel[0] ? ", " : "", tel);
     if (w) {
         const char *cur = SDL_GetWindowTitle(w);
         if (!title[0] || strncmp(cur, title, strlen(title))) {  // the game's own title, before our suffix
@@ -348,7 +362,7 @@ static void count_frame(SDL_Window *w) {
         snprintf(buf, sizeof buf, "%s | %.0f fps, worst %.1f ms", title, fps, worst);
         SDL_SetWindowTitle(w, buf);
     }
-    t0 = now, frames = 0, worst = 0;
+    t0 = now, frames = 0, worst = work_sum = cpu_sum = 0;
 }
 
 // MINA4MAC_FRAMELOG=<file> appends one line per frame, "f <work ms> <cpu ms> <swap ms>": work is the main thread's
@@ -361,6 +375,118 @@ static double now_ms(clockid_t id) {
     return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
 
+// MINA4MAC_VSYNC picks how the game's vsync (interval 1) is done. SDL's Cocoa backend paces swaps itself from a
+// display-link callback, and with interval 1 every swap waits for the next tick, even when one has passed since
+// the last swap, so a frame that runs a little over a refresh interval waits for a whole extra one.
+//   late (default): late swap, paced here: SDL's pacing off (0), our own display link counts ticks, and a swap
+//         waits only if no tick has passed since the last one, and never longer than 3 refresh periods (SDL's
+//         waits have no timeout: a display link that stops hung the game in SDL's swap, PLAN5 Phase 18b). A
+//         window is composited, so it doesn't tear. Jungle and heavy run 14-43% faster than with sdl.
+//   sdl: the game's interval, as is (the old behavior).
+//   sdllate: SDL's own late swap (-1), the same rule as late but without the timeout.
+//   native: SDL's pacing off (0) and the context's own swap interval (CGL) on: macOS blocks the swap only when
+//         its queue of frames is full. As fast as late in the A/Bs, but not shown to wait for the display.
+// Interval 0 (vsync off in the game's settings) is passed through in every mode.
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"  // CVDisplayLink (deprecated in macOS 15; SDL uses it)
+static struct {
+    CVDisplayLinkRef link;
+    pthread_mutex_t mu;
+    pthread_cond_t cv;
+    uint64_t ticks, seen;   // display-link callbacks so far; the count at the last swap (both under mu)
+    _Atomic int on;         // pace swaps (late mode and the game asked for vsync)
+    int dead;               // the last wait timed out: don't wait again until a tick shows up
+    double period_ms;       // nominal refresh period
+    int display;            // the window's display index the link follows
+    uint64_t swaps, waits, timeouts;
+} PACE = {.mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER, .display = -1};
+
+static CVReturn pace_tick(CVDisplayLinkRef l, const CVTimeStamp *now, const CVTimeStamp *out, CVOptionFlags in,
+                          CVOptionFlags *outf, void *ctx) {
+    (void)l, (void)now, (void)out, (void)in, (void)outf, (void)ctx;
+    pthread_mutex_lock(&PACE.mu);
+    PACE.ticks++;
+    pthread_cond_signal(&PACE.cv);
+    pthread_mutex_unlock(&PACE.mu);
+    return kCVReturnSuccess;
+}
+
+// Point the link at the current GL context's display and read its refresh period.
+static void pace_follow(void) {
+    CGLContextObj ctx = CGLGetCurrentContext();
+    if (ctx) CVDisplayLinkSetCurrentCGDisplayFromOpenGLContext(PACE.link, ctx, CGLGetPixelFormat(ctx));
+    CVTime p = CVDisplayLinkGetNominalOutputVideoRefreshPeriod(PACE.link);
+    PACE.period_ms = !(p.flags & kCVTimeIsIndefinite) && p.timeScale && p.timeValue
+                         ? 1000.0 * (double)p.timeValue / (double)p.timeScale : 1000.0 / 60;
+}
+
+static int pace_start(void) {
+    if (!PACE.link) {
+        if (CVDisplayLinkCreateWithActiveCGDisplays(&PACE.link) != kCVReturnSuccess) return PACE.link = NULL, -1;
+        CVDisplayLinkSetOutputCallback(PACE.link, pace_tick, NULL);
+        pace_follow();
+        if (CVDisplayLinkStart(PACE.link) != kCVReturnSuccess) return -1;
+    }
+    pthread_mutex_lock(&PACE.mu);
+    PACE.seen = PACE.ticks;
+    pthread_mutex_unlock(&PACE.mu);
+    PACE.on = 1;
+    return 0;
+}
+
+// Before a swap: wait for a tick unless one has passed since the last swap, at most 3 refresh periods. After a
+// timeout, swaps go unpaced (the game's own frame limit still holds 60) until the link ticks again.
+static void pace_wait(SDL_Window *w) {
+    if ((++PACE.swaps & 63) == 0) {  // the window may have moved to another display
+        int d = SDL_GetWindowDisplayIndex(w);
+        if (d != PACE.display) PACE.display = d, pace_follow();
+    }
+    pthread_mutex_lock(&PACE.mu);
+    if (PACE.ticks != PACE.seen) PACE.dead = 0;
+    else if (!PACE.dead) {
+        PACE.waits++;
+        double limit = 3 * PACE.period_ms, t0 = now_ms(CLOCK_MONOTONIC_RAW), left;
+        while (PACE.ticks == PACE.seen && (left = limit - (now_ms(CLOCK_MONOTONIC_RAW) - t0)) > 0) {
+            struct timespec ts = {(time_t)(left / 1000), (long)(fmod(left, 1000) * 1e6)};
+            pthread_cond_timedwait_relative_np(&PACE.cv, &PACE.mu, &ts);
+        }
+        if (PACE.ticks == PACE.seen) {
+            PACE.dead = 1;
+            if (PACE.timeouts++ % 100 == 0)
+                fprintf(stderr, "[vsync] no display tick in %.0f ms: unpaced until the next one (%llu times so far)\n",
+                        limit, (unsigned long long)PACE.timeouts);
+        }
+    }
+    PACE.seen = PACE.ticks;
+    pthread_mutex_unlock(&PACE.mu);
+}
+#pragma clang diagnostic pop
+
+HOST_CDECL(SDL2, SDL_GL_SetSwapInterval) {  // int SDL_GL_SetSwapInterval(int interval)
+    static const char *mode;
+    if (!mode) mode = getenv("MINA4MAC_VSYNC") && *getenv("MINA4MAC_VSYNC") ? getenv("MINA4MAC_VSYNC") : "late";
+    int want = (int)ARG(0), r;
+    PACE.on = 0;
+    if (want > 0 && !strcmp(mode, "late")) {
+        r = SDL_GL_SetSwapInterval(0);
+        if (r == 0 && pace_start() < 0) r = SDL_GL_SetSwapInterval(want);
+    } else if (want > 0 && !strcmp(mode, "sdllate")) {
+        r = SDL_GL_SetSwapInterval(-1);
+        if (r < 0) r = SDL_GL_SetSwapInterval(want);
+    } else if (want > 0 && !strcmp(mode, "native")) {
+        r = SDL_GL_SetSwapInterval(0);
+        GLint one = 1;
+        CGLContextObj ctx = CGLGetCurrentContext();
+        if (r == 0 && (!ctx || CGLSetParameter(ctx, kCGLCPSwapInterval, &one) != kCGLNoError))
+            r = SDL_GL_SetSwapInterval(want);
+    } else {
+        r = SDL_GL_SetSwapInterval(want);
+    }
+    fprintf(stderr, "[vsync] game asked for %d, mode %s: SDL interval %d (r=%d), paced here %s (%.2f ms)\n", want,
+            mode, SDL_GL_GetSwapInterval(), r, PACE.on ? "yes" : "no", PACE.period_ms);
+    ret_i32(c, (uint32_t)(int32_t)r);
+}
+
 HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *window)
     static int fd = -2;
     static double wall0, cpu0;
@@ -368,20 +494,21 @@ HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *win
         const char *path = getenv("MINA4MAC_FRAMELOG");
         fd = path && *path ? open(path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
     }
+    int timed = fd >= 0 || fps_on();
     double wall = 0, cpu = 0;
-    if (fd >= 0) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    if (timed) wall = now_ms(CLOCK_MONOTONIC_RAW), cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
     SDL_Window *w = sdl_host(ARG(0));
     uint64_t j0 = joblog_on ? joblog_now() : 0;
+    if (PACE.on) pace_wait(w);  // inside the timed span: swap_ms includes the wait, as it does SDL's
     SDL_GL_SwapWindow(w);
     if (joblog_on) joblog_frame(j0, joblog_now());
-    count_frame(w);
-    if (fd >= 0) {
-        double after = now_ms(CLOCK_MONOTONIC_RAW);
-        if (wall0) {
-            char line[64];
-            int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
-            if (write(fd, line, n) < 0) close(fd), fd = -1;
-        }
-        wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    if (!timed) return;
+    double after = now_ms(CLOCK_MONOTONIC_RAW);
+    count_frame(w, wall0 ? wall - wall0 : 0, wall0 ? cpu - cpu0 : 0);
+    if (fd >= 0 && wall0) {
+        char line[64];
+        int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
+        if (write(fd, line, n) < 0) close(fd), fd = -1;
     }
+    wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
 }

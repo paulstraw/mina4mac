@@ -4,7 +4,7 @@
 # msvcp120.dll, then wraps build/mina4mac in an app bundle that runs the game from that install (it copies
 # no game files; binaries and data/ are read in place, and logger.txt is written there, as on Windows).
 # Saves live under ~/Library/Application Support/mina4mac/. The launcher log goes to ~/Library/Logs/mina4mac.log
-# (the previous launch's in mina4mac.log.1).
+# (the previous launches' in mina4mac.log.1 to .5, newest first).
 # Usage: tools/package_app.sh [--no-build] [--fps] [--telemetry] [install dir]
 #   install: $NOITA_SRC, default the Sikarugir Wine prefix's GOG install (as tools/setup_game.sh)
 #   output: $MINA4MAC_APP, default build/Noita.app (gitignored; copy it anywhere, e.g. ~/Applications)
@@ -102,7 +102,10 @@ fi
 $FPS
 LOG="\$HOME/Library/Logs/mina4mac.log"
 mkdir -p "\$HOME/Library/Logs"
-[ -f "\$LOG" ] && mv -f "\$LOG" "\$LOG.1"  # keep the previous launch's log (e.g. a crash) for one more launch
+for i in 4 3 2 1; do  # keep the last 5 launches' logs (a crash, a playtest): mina4mac.log.1 (newest) to .5
+    [ -f "\$LOG.\$i" ] && mv -f "\$LOG.\$i" "\$LOG.\$((i + 1))"
+done
+[ -f "\$LOG" ] && mv -f "\$LOG" "\$LOG.1"
 exec /usr/bin/caffeinate -d -u "\$C/MacOS/mina4mac" "\$@" >"\$LOG" 2>&1
 EOF
 chmod +x "$C/MacOS/Noita"

@@ -11,7 +11,7 @@ the host. Types are marshalled by what they are:
   - SDL_Surface: a guest mirror struct, with pixels kept in guest memory (runtime/sdl2.c);
   - strings: guest strings are passed directly (paths are translated); returned strings are copied into
     a per-function guest buffer, valid until the next call, as SDL's own are.
-SDL_PollEvent, SDL_FreeSurface and SDL_GL_SwapWindow are hand-written in runtime/sdl2.c, and the C-library-style helpers
+SDL_PollEvent, SDL_FreeSurface, SDL_GL_SwapWindow and SDL_GL_SetSwapInterval are hand-written in runtime/sdl2.c, and the C-library-style helpers
 SDL2main uses are HLE in runtime/sdl2_stdlib.c.
 
 Writes build/gen_all/sdl2_gen.c (thunks) and build/gen_all/sdl2_layout.h (guest offsets: G_<struct>_<field>
@@ -29,7 +29,7 @@ from pe import ROOT, load  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
 HLE = {"SDL_malloc", "SDL_free", "SDL_isspace", "SDL_wcslen", "SDL_iconv_string", "SDL_SetMainReady"}  # sdl2_stdlib.c
-HAND = {"SDL_PollEvent", "SDL_FreeSurface", "SDL_GL_SwapWindow"}  # sdl2.c
+HAND = {"SDL_PollEvent", "SDL_FreeSurface", "SDL_GL_SwapWindow", "SDL_GL_SetSwapInterval"}  # sdl2.c
 EXTRA = {"SDL_GetVersion", "SDL_GetTicks"}  # not imported by the game; bridged for runtime/sdl_test.c
 OPAQUE = {"SDL_RWops"}  # complete in the headers, but the game only passes it back to SDL
 HANDLE_TYPEDEFS = {"SDL_GLContext"}  # typedef void *

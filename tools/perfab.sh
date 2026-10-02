@@ -2,7 +2,8 @@
 # A/B benchmark of two mina4mac binaries: n interleaved pairs of tools/perfbench.sh runs (ABBA order, so a slow
 # drift of the machine hits both sides equally), then the median and spread (min-max) of fps, work_ms and cpu_ms
 # per side and B's change against A. SCENE and UNCAPPED pass through to perfbench.sh; the perfbench mod must be
-# installed (tools/perfbench.sh install mina4mac). Each run's summary is kept in build/perfab/<time>/.
+# installed (tools/perfbench.sh install mina4mac). Each run's summary (and its raw
+# MINA4MAC_FRAMELOG) is kept in build/perfab/<time>/.
 #   cp build/mina4mac build/mina4mac.A; <change, rebuild>; tools/perfab.sh build/mina4mac.A build/mina4mac 3
 # A run that stalls or doesn't finish is retried once (a stalled run is invalid, not a finding); a second failure
 # stops the comparison.
@@ -21,6 +22,7 @@ run() {  # run <side> <binary> <i>
         if MINA4MAC_BIN=$2 tools/perfbench.sh run mina4mac "$f" >/dev/null 2>&1 && grep -q 'work_ms' "$f"; then
             # a frame over 1 s means the window stalled (see PLAN2): invalid
             if awk '/^PERFBENCH frame_ms/{exit !($10 < 1000)}' "$f"; then
+                cp build/game/perfbench_frames.txt "$OUT/$1_$3.frames" 2>/dev/null || true  # raw per-frame times
                 echo "$1 $3: $(awk '/ fps /{printf "%s fps", $7} / work_ms /{printf ", work %s ms", $4} / cpu_ms /{printf ", cpu %s ms", $4}' "$f")"
                 return
             fi

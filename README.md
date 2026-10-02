@@ -145,8 +145,8 @@ in bug reports.
 - **"Noita install not found" when opening the app**: the game folder moved or was deleted. Run steps 5 and 6
   again with its new location.
 - **Crashes or other bugs**: [open an issue](https://github.com/paulstraw/mina4mac/issues) with your Mac's chip
-  and macOS version, and attach the log, `~/Library/Logs/mina4mac.log`. The previous launch's log is
-  `mina4mac.log.1`, so it survives one relaunch.
+  and macOS version, and attach the log, `~/Library/Logs/mina4mac.log`. Earlier launches' logs are
+  `mina4mac.log.1` (the one before) to `mina4mac.log.5`.
 
 ## Development
 

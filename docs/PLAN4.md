@@ -379,3 +379,11 @@ bridge are unlikely to pay (dispatch 1.7%, Lua 0.4%); keep them only as a cheap 
     one 600 ms frame); 1 is the new game's first second; the other 5 (47–55 fps, worst frame 42–83 ms) are each a
     single second on arriving in a Holy Mountain (40–58 enemies within 1024 px). No gameplay dip longer than a second
     so far. Still open: a run into the jungle.
+  - 2026-09-29, second session (`--telemetry`, 476b7f4, repackaged first so the mod was enabled): ~50 min, three
+    runs, the last to the Hiisi Base (snowcastle, 55–60 fps with 100–130 enemies near), then death. No jungle again.
+    One sustained dip, the user's "slowdown a bit before I exited level 3": 25 s at a flat 48.0 fps in snowcave
+    (x 270–610, y 4120–4620; frame avg 20.84 ms every second, worst ~21 ms, entities 130–180, enemies 20–34), ending
+    as the player entered the Holy Mountain. The user had angered Steve in that Holy Mountain, escaped back up with
+    a black hole, and fought "a couple normal snow level enemies"; "it got slow even once they were dead". The same
+    spot ran at 60 fps earlier in the run. Also: fungicave ~20 s at 49–56 fps (80–90 enemies), Holy Mountain
+    arrivals 44–55 fps for 1–2 s, deaths/new game 25–40 fps. Followed up in `PLAN5.md`.
