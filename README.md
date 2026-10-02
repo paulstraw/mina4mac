@@ -34,6 +34,9 @@ Install [Homebrew](https://brew.sh) if you don't have it (follow the instruction
 brew install sdl2 uv
 ```
 
+Homebrew's `sdl2` is sdl2-compat, an SDL2 layer that runs on SDL3; it installs SDL3 too, and step 5 copies both into
+the app.
+
 ### 2. Get mina4mac
 
 ```sh
@@ -137,6 +140,8 @@ in bug reports.
   [Supported builds](#supported-builds).
 - **"no Noita install at …"**: the path in step 5 isn't the folder that contains `noita.exe` and `data/`.
 - **No sound**: step 4 wasn't done, or was done after step 5. Run `tools/setup_fmod.sh`, then steps 5 and 6 again.
+- **"Failed loading SDL3 library"** (in the log, or the app quits at once): the app was built before step 5
+  bundled SDL3. Update mina4mac (`git pull`) and run steps 5 and 6 again.
 - **"Noita install not found" when opening the app**: the game folder moved or was deleted. Run steps 5 and 6
   again with its new location.
 - **Crashes or other bugs**: [open an issue](https://github.com/paulstraw/mina4mac/issues) with your Mac's chip
@@ -163,5 +168,5 @@ stays in `build/` and is never committed. The gain is small (see `docs/PLAN3.md`
 ## License
 
 MIT, see `LICENSE`. Bundled third-party code keeps its own license: LuaJIT (`third_party/luajit`, MIT) and the
-Khronos OpenGL registry (`third_party/khronos/gl.xml`, Apache-2.0). SDL2 (zlib) and, if you set it up, FMOD (under
+Khronos OpenGL registry (`third_party/khronos/gl.xml`, Apache-2.0). SDL2 (sdl2-compat) and SDL3 (both zlib) and, if you set it up, FMOD (under
 FMOD's own license) are copied into the app you build. Noita is © Nolla Games; this project isn't affiliated with them.
