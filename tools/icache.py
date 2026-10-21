@@ -3,14 +3,18 @@
 A --icprof build (tools/build_all.py --icprof) run with MINA4MAC_ICPROF=<file> writes "site<TAB>target<TAB>calls"
 lines. This merges one or more of them (each scaled to the same total, so scenes weigh equally), takes the hottest
 sites until they cover --coverage of all calls, and for each keeps up to --max-targets targets that get at least
---min-share of the site's calls. The result (tools/icache_sites.txt by default) is what build_all.py --ic reads:
+--min-share of the site's calls. The result (tools/icache_sites.txt by default; tools/icache_sites.steam.txt for the Steam build) is what build_all.py --ic reads:
 "site target [target...]" lines in hex, hottest site first. It holds only addresses in the exe.
 
   uv run tools/icache.py build/icprof/heavy.tsv build/icprof/flood.tsv [-o tools/icache_sites.txt]
 """
 import argparse
 import collections
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from pe import build_data  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -18,11 +22,12 @@ ROOT = Path(__file__).resolve().parent.parent
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("profiles", nargs="+")
-    ap.add_argument("-o", "--out", default=str(ROOT / "tools/icache_sites.txt"))
+    ap.add_argument("-o", "--out", help="default: tools/icache_sites.txt for the build in NOITA_DIR")
     ap.add_argument("--coverage", type=float, default=0.99, help="fraction of all indirect calls the sites cover")
     ap.add_argument("--min-share", type=float, default=0.05, help="a target's minimum share of its site's calls")
     ap.add_argument("--max-targets", type=int, default=2)
     args = ap.parse_args()
+    args.out = args.out or str(build_data("icache_sites.txt"))
 
     sites = collections.defaultdict(collections.Counter)
     for p in args.profiles:

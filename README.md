@@ -7,7 +7,7 @@ DLLs: SDL2, OpenGL, LuaJIT and FMOD are bridged to their macOS versions.
 ## What you need
 
 - A Mac with Apple Silicon (M1 or later), macOS 14 or later, and a few GB of free disk space.
-- Noita for Windows from GOG, the build of Jan 25 2025 (version `20250125-1640` on GOG). See [Supported builds](#supported-builds).
+- Noita for Windows, the build of Jan 25 2025, from GOG (version `20250125-1640`) or Steam. See [Supported builds](#supported-builds).
 - About 15 minutes, most of it waiting for the build.
 
 This repository contains no game code or assets, so there's no download-and-play app: you build `Noita.app`
@@ -49,7 +49,7 @@ The remaining commands run from this `mina4mac` folder. If you cloned without `-
 
 ### 3. Get Noita's Windows files onto your Mac
 
-You need the folder that contains `noita.exe` (along with `data/`, `msvcp120.dll` and the rest). There are two
+You need the folder that contains `noita.exe` (along with `data/`, `msvcp120.dll` and the rest). There are three
 ways to get it:
 
 - **If you already play Noita through Wine** (CrossOver, Whisky, Porting Kit, a Wineskin/Sikarugir wrapper): the
@@ -67,6 +67,16 @@ ways to get it:
 
   The game folder is `~/Games/Noita`, or `~/Games/Noita/app` if innoextract put the files in an `app` subfolder:
   use whichever one contains `noita.exe`.
+- **From Steam**, on the Mac itself (Steam won't install Noita on a Mac, but it downloads the Windows files): in
+  Terminal, run `open steam://open/console`, and in the Console tab that opens in Steam, run
+  `download_depot 881100 881101`. When it finishes it prints the folder it downloaded to (under
+  `~/Library/Application Support/Steam/`); copy that folder somewhere permanent, since Steam may clean it up:
+
+  ```sh
+  ditto ~/Library/Application\ Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steamapps/content/app_881100/depot_881101 ~/Games/Noita
+  ```
+
+  (Use the folder Steam printed if it's a different one.) The game folder is `~/Games/Noita`.
 
 Keep this folder where it is: the app runs the game from it.
 
@@ -127,16 +137,17 @@ prefix). Back up both sides first.
 
 ## Supported builds
 
-Only the GOG build of Jan 25 2025 (listed on GOG as version `20250125-1640`) is supported, and step 5 refuses any other `noita.exe`. The Steam version is a
-different binary and doesn't work. When Noita is patched, the runtime has to be updated for the new build before it
-works, so keep a copy of the supported game folder (and its installer).
+Two builds of Jan 25 2025 are supported: GOG's (listed as version `20250125-1640`) and Steam's (depot 881101, the
+`noita.exe` with SHA-256 `808d2a0a…`); step 5 refuses any other `noita.exe`. They're the same game, so saves work
+with either. The Steam build runs offline: no achievements, Workshop or Steam presence. When Noita is patched, the runtime has to be updated for the new build before it
+works, so keep a copy of the supported game folder (and its installer, for GOG).
 
-Tested on an M1 Max with macOS 26.6. Other chips and macOS versions haven't been tried yet, so please include yours
+Tested on an M1 Max with macOS 26.6 (GOG) and an M4 Pro (Steam). Other chips and macOS versions haven't been tried yet, so please include yours
 in bug reports.
 
 ## Troubleshooting
 
-- **"… is not the supported build"**: your `noita.exe` is a different version (or the Steam build). See
+- **"… is not a supported build"**: your `noita.exe` is a different version. See
   [Supported builds](#supported-builds).
 - **"no Noita install at …"**: the path in step 5 isn't the folder that contains `noita.exe` and `data/`.
 - **No sound**: step 4 wasn't done, or was done after step 5. Run `tools/setup_fmod.sh`, then steps 5 and 6 again.

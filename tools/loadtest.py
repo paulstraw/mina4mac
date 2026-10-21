@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import ROOT  # noqa: E402
-from pe import MODULES, build_dir, game_dir, load  # noqa: E402
+from pe import MODULES, build_dir, game_build, game_dir, load  # noqa: E402
 
 
 def main():
@@ -19,6 +19,9 @@ def main():
                     str(ROOT / "runtime/load_test.c"), str(ROOT / "runtime/rt.c"), "-o", str(exe)], check=True)
     ok = True
     for m, (file, base) in MODULES.items():
+        if m == "Galaxy" and game_build() != "gog":  # the Steam build has steam_api.dll (HLE, not loaded) instead
+            print(f"{file}: not in the {game_build()} build, skipped")
+            continue
         img = load(m)
         out = build_dir(m) / "loadtest.bin"
         out.parent.mkdir(parents=True, exist_ok=True)

@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT  # noqa: E402
-from pe import build_dir  # noqa: E402
+from pe import build_dir, game_build  # noqa: E402
 
 BUILD = ROOT / "build"
 # name -> instruction run (first, last) in noita.exe; runtime/atomic_test.c relies on these operand registers.
@@ -56,6 +56,9 @@ def lift_run(prog, name, first, last, tso):
 
 
 def main():
+    if game_build() != "gog":  # the addresses below are the GOG build's
+        print(f"skipped: written against the GOG build's addresses (this is the {game_build()} build)")
+        sys.exit(0)
     ap = argparse.ArgumentParser()
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--iters", type=int, default=200000)

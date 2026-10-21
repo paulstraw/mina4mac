@@ -21,7 +21,8 @@
 #include "rt.h"
 #include "sched.h"
 
-enum { EXE_BASE = 0x400000, EXE_ENTRY = 0xdfadb0, EXIT_RET = 0x0badf000 };
+enum { EXE_BASE = 0x400000, EXIT_RET = 0x0badf000 };
+extern const uint32_t EXE_ENTRY;  // of the noita.exe build_all.py recompiled (table.c)
 
 // Recompiled DLLs, in load order, at their bases from tools/pe.py MODULES.
 static const struct { const char *file; uint32_t base, entry; } DLLS[] = {

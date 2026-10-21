@@ -276,7 +276,7 @@ enum { HLE_MODULES_LO = 0xE0000000u, ERROR_MOD_NOT_FOUND = 126, ERROR_PROC_NOT_F
 static const char *const HLE_DLLS[] = {
     "kernel32.dll", "user32.dll", "gdi32.dll", "opengl32.dll", "shell32.dll", "shlwapi.dll", "ole32.dll",
     "winmm.dll", "wininet.dll", "ws2_32.dll", "comdlg32.dll", "msvcr120.dll",
-    "SDL2.dll", "lua51.dll", "fmod.dll", "fmodstudio.dll", "Galaxy.dll",
+    "SDL2.dll", "lua51.dll", "fmod.dll", "fmodstudio.dll", "Galaxy.dll", "steam_api.dll",
 };
 enum { NHLE_DLLS = sizeof HLE_DLLS / sizeof *HLE_DLLS };
 
