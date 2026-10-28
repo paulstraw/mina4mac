@@ -15,6 +15,7 @@
 #     the app's save, so each [fps] line in the log also names the frame, biome, position and nearby entities
 #     (the game drops mods it can't find from the save's list, so run this again after benchmark runs in build/game)
 # Bundles Homebrew's SDL2 (sdl2-compat, plus the SDL3 it loads) and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
+# For the Steam build, also libsteam_api.dylib if tools/setup_steam.sh ran (else the game runs offline).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BUILD=1 FPS= TELEMETRY=0
@@ -89,6 +90,11 @@ if [ -f build/fmod_api/lib/libfmodstudio.dylib ]; then
     cp build/fmod_api/lib/libfmod.dylib build/fmod_api/lib/libfmodstudio.dylib "$C/Frameworks/"
     fmod=yes
 fi
+steam=no
+if [ "$GAME_BUILD" = Steam ] && [ -f build/steam_api/libsteam_api.dylib ]; then
+    cp build/steam_api/libsteam_api.dylib "$C/Frameworks/"
+    steam=yes
+fi
 icon=$(ls "$SRC"/goggame-*.ico 2>/dev/null | head -1 || true)
 [ -n "$icon" ] && sips -s format icns "$icon" --out "$C/Resources/Noita.icns" >/dev/null
 
@@ -106,6 +112,7 @@ if [ ! -f "\$NOITA_DIR/noita.exe" ]; then
     exit 1
 fi
 [ -f "\$C/Frameworks/libfmodstudio.dylib" ] && export MINA4MAC_FMOD="\${MINA4MAC_FMOD:-\$C/Frameworks}"
+[ -f "\$C/Frameworks/libsteam_api.dylib" ] && export MINA4MAC_STEAM="\${MINA4MAC_STEAM:-\$C/Frameworks}"
 $FPS
 LOG="\$HOME/Library/Logs/mina4mac.log"
 mkdir -p "\$HOME/Library/Logs"
@@ -139,7 +146,7 @@ codesign -s - -f "$C/Frameworks/"*.dylib "$C/MacOS/mina4mac"
 codesign -s - -f "$TMP"
 rm -rf "$APP"
 mv "$TMP" "$APP"
-echo "$APP: game $SRC ($GAME_BUILD), FMOD $fmod ($(du -sh "$APP" | cut -f1))"
+echo "$APP: game $SRC ($GAME_BUILD), FMOD $fmod, Steam $steam ($(du -sh "$APP" | cut -f1))"
 
 # The app's save (AppData under ~/Library/Application Support/mina4mac, as runtime/shell32.c maps it).
 SAVE="$HOME/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita/save00/mod_config.xml"

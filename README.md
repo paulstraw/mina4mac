@@ -139,7 +139,22 @@ prefix). Back up both sides first.
 
 Two builds of Jan 25 2025 are supported: GOG's (listed as version `20250125-1640`) and Steam's (depot 881101, the
 `noita.exe` with SHA-256 `808d2a0a…`); step 5 refuses any other `noita.exe`. They're the same game, so saves work
-with either. The Steam build runs offline: no achievements, Workshop or Steam presence. When Noita is patched, the runtime has to be updated for the new build before it
+with either.
+
+The Steam build connects to Steam (presence and play time, achievements, subscribed Workshop mods) if you give it
+Valve's macOS `libsteam_api.dylib` before step 5: download Steamworks SDK 1.57 from
+[partner.steamgames.com](https://partner.steamgames.com/downloads/list) (any Steam account can sign in and accept
+the SDK agreement; 1.57 is the newest SDK whose `SteamAPI_Init` the bridge can use), then run
+
+```sh
+tools/setup_steam.sh <sdk>/redistributable_bin/osx/libsteam_api.dylib
+```
+
+Step 5 then ends with `Steam yes`. Steam must be running and logged in when you start the game; otherwise, or
+without the library, it runs offline, and the log (see [Troubleshooting](#troubleshooting)) says why. Steam's own
+Noita entry stays greyed out on a Mac: to start the game from Steam, add the app with Games → Add a Non-Steam Game
+to My Library; it still counts as Noita. Cloud saves don't sync, as the game relies on Steam Auto-Cloud, which is
+set up for Windows only, and the Steam overlay doesn't appear. When Noita is patched, the runtime has to be updated for the new build before it
 works, so keep a copy of the supported game folder (and its installer, for GOG).
 
 Tested on an M1 Max with macOS 26.6 (GOG) and an M4 Pro (Steam). Other chips and macOS versions haven't been tried yet, so please include yours
