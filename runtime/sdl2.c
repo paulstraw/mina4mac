@@ -227,10 +227,25 @@ __attribute__((constructor)) static void sdl_hints(void) {
 // size and never reads the window's back. On a Retina display the mode switch gives a window in pixels
 // (3024x1964 for a 1800x1169 point desktop), so the game drew in its corner and mapped the mouse wrong (issue #5).
 // A mode switch buys nothing on macOS: both fullscreen modes are a desktop-sized borderless window.
+// The size it asks for is the desktop size of the display picked in its options ("Display number"), read at
+// startup and when that option changes. SDL goes fullscreen on the window's current display, so after a drag to
+// another display the game drew for the wrong size (issue #5): move the window back to the display of that size.
 HOST_CDECL(SDL2, SDL_SetWindowFullscreen) {  // int SDL_SetWindowFullscreen(SDL_Window *window, Uint32 flags)
+    SDL_Window *w = sdl_host(ARG(0));
     uint32_t flags = ARG(1);
-    if (flags & SDL_WINDOW_FULLSCREEN) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-    ret_i32(c, (uint32_t)SDL_SetWindowFullscreen(sdl_host(ARG(0)), flags));
+    if (flags & SDL_WINDOW_FULLSCREEN) {
+        flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+        int ww, wh, cur = SDL_GetWindowDisplayIndex(w);
+        SDL_DisplayMode m;
+        SDL_GetWindowSize(w, &ww, &wh);
+        if (SDL_GetDesktopDisplayMode(cur, &m) == 0 && (m.w != ww || m.h != wh))
+            for (int d = 0; d < SDL_GetNumVideoDisplays(); d++)
+                if (SDL_GetDesktopDisplayMode(d, &m) == 0 && m.w == ww && m.h == wh) {
+                    SDL_SetWindowPosition(w, SDL_WINDOWPOS_CENTERED_DISPLAY(d), SDL_WINDOWPOS_CENTERED_DISPLAY(d));
+                    break;
+                }
+    }
+    ret_i32(c, (uint32_t)SDL_SetWindowFullscreen(w, flags));
 }
 
 // The game offers every display mode as a window size. On a Retina display SDL also lists pixel-sized modes

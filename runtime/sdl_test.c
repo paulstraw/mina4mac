@@ -185,6 +185,24 @@ int main(void) {
             snprintf(name, sizeof name, "%s: drawable h", names[i]);
             CHECK(name, dh, rh);
         }
+        // The game reads the desktop size only at startup and when its "Display number" option changes, so after
+        // the window is dragged to another display it still asks for its own display's size. Fullscreen must come
+        // out at that size: on the game's display, not the one the window was dragged to (issue #5).
+        if (w && SDL_GetNumVideoDisplays() > 1) {
+            int dw, dh;
+            SDL_SetWindowPosition(w, SDL_WINDOWPOS_CENTERED_DISPLAY(1), SDL_WINDOWPOS_CENTERED_DISPLAY(1));
+            SDL("SDL_SetWindowSize", gw, hm.w, hm.h);
+            SDL("SDL_SetWindowFullscreen", gw, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            SDL_PumpEvents();
+            SDL_GL_GetDrawableSize(w, &dw, &dh);
+            CHECK("dragged to display 1, fullscreen: drawable w", dw, hm.w);
+            CHECK("  drawable h", dh, hm.h);
+            CHECK("  on display 0", SDL_GetWindowDisplayIndex(w), 0);
+            SDL("SDL_SetWindowSize", gw, 1280, 720);
+            SDL("SDL_SetWindowFullscreen", gw, 0);
+        } else {
+            printf("(one display: drag-to-another-display check skipped)\n");
+        }
         if (ctx) SDL_GL_DeleteContext(ctx);
         if (w) SDL_DestroyWindow(w);
 
