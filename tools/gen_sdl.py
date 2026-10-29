@@ -29,7 +29,8 @@ from pe import ROOT, load  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
 HLE = {"SDL_malloc", "SDL_free", "SDL_isspace", "SDL_wcslen", "SDL_iconv_string", "SDL_SetMainReady"}  # sdl2_stdlib.c
-HAND = {"SDL_PollEvent", "SDL_FreeSurface", "SDL_GL_SwapWindow"}  # sdl2.c
+HAND = {"SDL_PollEvent", "SDL_FreeSurface", "SDL_GL_SwapWindow", "SDL_SetWindowFullscreen",
+        "SDL_GetNumDisplayModes", "SDL_GetDisplayMode"}  # sdl2.c
 EXTRA = {"SDL_GetVersion", "SDL_GetTicks"}  # not imported by the game; bridged for runtime/sdl_test.c
 OPAQUE = {"SDL_RWops"}  # complete in the headers, but the game only passes it back to SDL
 HANDLE_TYPEDEFS = {"SDL_GLContext"}  # typedef void *
