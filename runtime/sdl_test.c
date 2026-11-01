@@ -162,6 +162,63 @@ int main(void) {
         CHECK("  format", rd32(m + G_SDL_DisplayMode_format), hm.format);
         CHECK("  driverdata handle", sdl_host_or_null(rd32(m + G_SDL_DisplayMode_driverdata)) == hm.driverdata, 1);
         CHECK("GetNumVideoDisplays", SDL0("SDL_GetNumVideoDisplays"), SDL_GetNumVideoDisplays());
+
+        // The game sets its viewport from the size it asks for and never reads the window's size back, so a
+        // window must come out at that size. Its fullscreen modes: SDL_SetWindowSize(desktop size), then
+        // SDL_SetWindowFullscreen with FULLSCREEN_DESKTOP or FULLSCREEN (issue #5: on a Retina display, a
+        // real mode switch gave a 3024x1964 drawable for a 1800x1169 request, and the game drew in a corner).
+        SDL_Window *w = SDL_CreateWindow("sdltest", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720,
+                                         SDL_WINDOW_OPENGL);
+        SDL_GLContext ctx = w ? SDL_GL_CreateContext(w) : NULL;
+        uint32_t gw = sdl_handle(w);
+        const uint32_t modes[] = {SDL_WINDOW_FULLSCREEN_DESKTOP, SDL_WINDOW_FULLSCREEN, 0};
+        const char *names[] = {"fullscreen desktop", "fullscreen", "windowed"};
+        for (int i = 0; w && i < 3; i++) {
+            int rw = modes[i] ? hm.w : 1280, rh = modes[i] ? hm.h : 720, dw, dh;
+            SDL("SDL_SetWindowSize", gw, rw, rh);
+            SDL("SDL_SetWindowFullscreen", gw, modes[i]);
+            SDL_PumpEvents();
+            SDL_GL_GetDrawableSize(w, &dw, &dh);
+            char name[64];
+            snprintf(name, sizeof name, "%s: drawable w", names[i]);
+            CHECK(name, dw, rw);
+            snprintf(name, sizeof name, "%s: drawable h", names[i]);
+            CHECK(name, dh, rh);
+        }
+        // The game reads the desktop size only at startup and when its "Display number" option changes, so after
+        // the window is dragged to another display it still asks for its own display's size. Fullscreen must come
+        // out at that size: on the game's display, not the one the window was dragged to (issue #5).
+        if (w && SDL_GetNumVideoDisplays() > 1) {
+            int dw, dh;
+            SDL_SetWindowPosition(w, SDL_WINDOWPOS_CENTERED_DISPLAY(1), SDL_WINDOWPOS_CENTERED_DISPLAY(1));
+            SDL("SDL_SetWindowSize", gw, hm.w, hm.h);
+            SDL("SDL_SetWindowFullscreen", gw, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            SDL_PumpEvents();
+            SDL_GL_GetDrawableSize(w, &dw, &dh);
+            CHECK("dragged to display 1, fullscreen: drawable w", dw, hm.w);
+            CHECK("  drawable h", dh, hm.h);
+            CHECK("  on display 0", SDL_GetWindowDisplayIndex(w), 0);
+            SDL("SDL_SetWindowSize", gw, 1280, 720);
+            SDL("SDL_SetWindowFullscreen", gw, 0);
+        } else {
+            printf("(one display: drag-to-another-display check skipped)\n");
+        }
+        if (ctx) SDL_GL_DeleteContext(ctx);
+        if (w) SDL_DestroyWindow(w);
+
+        // The game's resolution list is every size SDL_GetDisplayMode reports, and a windowed size must fit the
+        // display (issue #5: Retina pixel modes such as 3024x1964 were listed for an 1800x1169 point desktop).
+        int n = (int)SDL("SDL_GetNumDisplayModes", 0), too_big = 0, desktop_listed = 0;
+        for (int i = 0; i < n; i++) {
+            memset(P(m), 0xcc, G_SDL_DisplayMode_SIZE);
+            if (SDL("SDL_GetDisplayMode", 0, i, m)) { too_big++; continue; }
+            int mw = (int)rd32(m + G_SDL_DisplayMode_w), mh = (int)rd32(m + G_SDL_DisplayMode_h);
+            too_big += mw > hm.w || mh > hm.h;
+            desktop_listed |= mw == hm.w && mh == hm.h;
+        }
+        CHECK("GetNumDisplayModes > 0", n > 0, 1);
+        CHECK("  modes larger than the desktop", too_big, 0);
+        CHECK("  desktop size listed", desktop_listed, 1);
     } else {
         printf("(video unavailable, display mode checks skipped: %s)\n", SDL_GetError());
     }

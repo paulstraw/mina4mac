@@ -223,6 +223,67 @@ __attribute__((constructor)) static void sdl_hints(void) {
     SDL_SetHintWithPriority("SDL_MAC_PRESS_AND_HOLD", "0", SDL_HINT_DEFAULT);
 }
 
+// The game's "real" fullscreen (SDL_WINDOW_FULLSCREEN) asks for the desktop size, then sets its viewport from that
+// size and never reads the window's back. On a Retina display the mode switch gives a window in pixels
+// (3024x1964 for a 1800x1169 point desktop), so the game drew in its corner and mapped the mouse wrong (issue #5).
+// A mode switch buys nothing on macOS: both fullscreen modes are a desktop-sized borderless window.
+// The size it asks for is the desktop size of the display picked in its options ("Display number"), read at
+// startup and when that option changes. SDL goes fullscreen on the window's current display, so after a drag to
+// another display the game drew for the wrong size (issue #5): move the window back to the display of that size.
+HOST_CDECL(SDL2, SDL_SetWindowFullscreen) {  // int SDL_SetWindowFullscreen(SDL_Window *window, Uint32 flags)
+    SDL_Window *w = sdl_host(ARG(0));
+    uint32_t flags = ARG(1);
+    if (flags & SDL_WINDOW_FULLSCREEN) {
+        flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+        int ww, wh, cur = SDL_GetWindowDisplayIndex(w);
+        SDL_DisplayMode m;
+        SDL_GetWindowSize(w, &ww, &wh);
+        if (SDL_GetDesktopDisplayMode(cur, &m) == 0 && (m.w != ww || m.h != wh))
+            for (int d = 0; d < SDL_GetNumVideoDisplays(); d++)
+                if (SDL_GetDesktopDisplayMode(d, &m) == 0 && m.w == ww && m.h == wh) {
+                    SDL_SetWindowPosition(w, SDL_WINDOWPOS_CENTERED_DISPLAY(d), SDL_WINDOWPOS_CENTERED_DISPLAY(d));
+                    break;
+                }
+    }
+    ret_i32(c, (uint32_t)SDL_SetWindowFullscreen(w, flags));
+}
+
+// The game offers every display mode as a window size. On a Retina display SDL also lists pixel-sized modes
+// (3024x1964, 2560x1600, ... for an 1800x1169 point desktop), and those windows ran off the screen (issue #5).
+// The guest sees only the modes that fit the desktop; index i is the i-th of them.
+static int fitting_mode(int display, int i, SDL_DisplayMode *out) {  // host index of guest mode i, or -1
+    SDL_DisplayMode desk, m;
+    if (SDL_GetDesktopDisplayMode(display, &desk) < 0) return SDL_GetDisplayMode(display, i, out) < 0 ? -1 : i;
+    for (int j = 0, n = SDL_GetNumDisplayModes(display); j < n; j++)
+        if (SDL_GetDisplayMode(display, j, &m) == 0 && m.w <= desk.w && m.h <= desk.h && i-- == 0)
+            return *out = m, j;
+    return -1;
+}
+
+HOST_CDECL(SDL2, SDL_GetNumDisplayModes) {  // int SDL_GetNumDisplayModes(int displayIndex)
+    int d = (int)ARG(0), n = SDL_GetNumDisplayModes(d), count = 0;
+    SDL_DisplayMode m;
+    while (count < n && fitting_mode(d, count, &m) >= 0) count++;
+    ret_i32(c, (uint32_t)(n < 0 ? n : count));
+}
+
+HOST_CDECL(SDL2, SDL_GetDisplayMode) {  // int SDL_GetDisplayMode(int displayIndex, int modeIndex, SDL_DisplayMode *mode)
+    SDL_DisplayMode m;
+    if (fitting_mode((int)ARG(0), (int)ARG(1), &m) < 0) {
+        ret_i32(c, (uint32_t)SDL_SetError("display mode index out of range"));
+        return;
+    }
+    uint32_t g = ARG(2);
+    if (g) {
+        wr32(g + G_SDL_DisplayMode_format, m.format);
+        wr32(g + G_SDL_DisplayMode_w, (uint32_t)m.w);
+        wr32(g + G_SDL_DisplayMode_h, (uint32_t)m.h);
+        wr32(g + G_SDL_DisplayMode_refresh_rate, (uint32_t)m.refresh_rate);
+        wr32(g + G_SDL_DisplayMode_driverdata, sdl_handle(m.driverdata));
+    }
+    ret_i32(c, 0);
+}
+
 // SDL_Event is 56 bytes on both sides and most members are laid out identically; tools/gen_sdl.py checks
 // that the ones below are the only exceptions (they hold pointers).
 static void event_to_guest(SDL_Event *e, uint32_t g) {
