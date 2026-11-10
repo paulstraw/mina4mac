@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from lift import Program  # noqa: E402
+from pe import game_build  # noqa: E402
 
 SANDBOX_FN = (0x7ee720, 0x7eee5c)  # void sandbox(bool patch) (cl): the function's address range
 PATCH = bytes.fromhex("c70500000000" "00000000")  # stored at [ebp-0x210] by SANDBOX_FN
@@ -29,6 +30,9 @@ PSEUDO = {0xffffd8f0: "LUA_REGISTRYINDEX", 0xffffd8ef: "LUA_ENVIRONINDEX", 0xfff
 
 
 def main():
+    if game_build() != "gog":  # the addresses below are the GOG build's
+        print(f"skipped: written against the GOG build's addresses (this is the {game_build()} build)")
+        sys.exit(0)
     p = Program("noita")
     img = p.img
     rd = lambda a: struct.unpack("<I", img.read(a, 4))[0]  # noqa: E731

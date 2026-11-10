@@ -495,6 +495,21 @@ static void sdl_main_imports(CPU *cp) {
 
     // Galaxy offline, GL with no context current (a no-op, still popping its stdcall args).
     CHECK("Galaxy User() = NULL", (call(&c, "Galaxy.dll", "?User@api@galaxy@@YAPAVIUser@12@XZ", 0, NULL), c.eax), 0);
+    // Steam offline: Init fails, no relaunch, and an interface context ({init fn, counter, pointer}) gives a NULL pointer
+    // without running its init function.
+    setenv("MINA4MAC_STEAM", "off", 1);
+    CHECK("SteamAPI_RestartAppIfNecessary = 0", (call(&c, "steam_api.dll", "SteamAPI_RestartAppIfNecessary", 1, (uint32_t[]){881100}), c.eax), 0);
+    CHECK("SteamAPI_Init offline = 0", (call(&c, "steam_api.dll", "SteamAPI_Init", 0, NULL), c.eax), 0);
+    uint32_t sctx = heap_calloc(1, 12);
+    wr32(sctx, 0x0badf00d);  // never called: no recompiled function there
+    CHECK("ContextInit returns &ctx[2]", (call(&c, "steam_api.dll", "SteamInternal_ContextInit", 1, (uint32_t[]){sctx}), c.eax), sctx + 8);
+    CHECK("ContextInit offline: NULL interface", rd32(sctx + 8), 0);
+    // A CCallbackBase {vtable, flags byte, callback id}: registering sets the id and the registered flag, as the SDK does.
+    uint32_t scb = heap_calloc(1, 12);
+    call(&c, "steam_api.dll", "SteamAPI_RegisterCallback", 2, (uint32_t[]){scb, 1101});
+    CHECK("RegisterCallback: flag and id", rd8(scb + 4) * 10000 + rd32(scb + 8), 11101);
+    call(&c, "steam_api.dll", "SteamAPI_UnregisterCallback", 1, (uint32_t[]){scb});
+    CHECK("UnregisterCallback clears the flag", rd8(scb + 4), 0);
     // FMOD bridge over the silent stub backend: handles, user data, version, empty banks, per-path descriptions.
     setenv("MINA4MAC_AUDIO", "stub", 1);
 #define FS(name, ...) (call(&c, "fmodstudio.dll", name, sizeof((uint32_t[]){__VA_ARGS__}) / 4, (uint32_t[]){__VA_ARGS__}), c.eax)

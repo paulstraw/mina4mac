@@ -7,6 +7,7 @@
 # (the previous launch's in mina4mac.log.1).
 # Usage: tools/package_app.sh [--no-build] [--fps] [--telemetry] [install dir]
 #   install: $NOITA_SRC, default the Sikarugir Wine prefix's GOG install (as tools/setup_game.sh)
+#   $MINA4MAC_BUILD_ARGS: extra tools/build_all.py arguments, e.g. "--sync check"
 #   output: $MINA4MAC_APP, default build/Noita.app (gitignored; copy it anywhere, e.g. ~/Applications)
 #   --no-build: reuse the existing build/mina4mac (it must have been built from the same exe)
 #   --fps: the app shows fps and the worst frame time in the window title (MINA4MAC_FPS=1; not in fullscreen)
@@ -14,6 +15,7 @@
 #     the app's save, so each [fps] line in the log also names the frame, biome, position and nearby entities
 #     (the game drops mods it can't find from the save's list, so run this again after benchmark runs in build/game)
 # Bundles Homebrew's SDL2 (sdl2-compat, plus the SDL3 it loads) and, if tools/setup_fmod.sh ran, the FMOD dylibs (else audio is the silent stub).
+# For the Steam build, also libsteam_api.dylib if tools/setup_steam.sh ran (else the game runs offline).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 BUILD=1 FPS= TELEMETRY=0
@@ -29,14 +31,17 @@ done
 SRC=${1:-${NOITA_SRC:-"$HOME/Applications/Noita Sikarugir.app/Contents/SharedSupport/prefix/drive_c/GOG Games/Noita"}}
 APP=${MINA4MAC_APP:-build/Noita.app}
 
-# The runtime is written against one build of the game (Jan 25 2025, GOG): check the binaries it recompiles.
-check() {  # check <file> <sha256>
-    [ -f "$SRC/$1" ] || { echo "no Noita install at $SRC ($1 missing)"; exit 1; }
-    [ "$(shasum -a 256 "$SRC/$1" | cut -d' ' -f1)" = "$2" ] ||
-        { echo "$SRC/$1 is not the supported build (Noita, Build Jan 25 2025, GOG)"; exit 1; }
-}
-check noita.exe f0f5ffd1c64558663ac7cffaf689f4899732a56494c3530b806bf3357d094363
-check msvcp120.dll 87c42ca155473e4e71857d03497c8cbc28fa8ff7f2c8d72e8a1f39b71078f608
+# The runtime is written against the Jan 25 2025 build of the game, from GOG or Steam (tools/pe.py BUILDS):
+# check the binaries it recompiles.
+sha() { [ -f "$SRC/$1" ] || { echo "no Noita install at $SRC ($1 missing)"; exit 1; }; shasum -a 256 "$SRC/$1" | cut -d' ' -f1; }
+EXE_SHA=$(sha noita.exe)
+case $EXE_SHA in
+f0f5ffd1c64558663ac7cffaf689f4899732a56494c3530b806bf3357d094363) GAME_BUILD=GOG ;;
+808d2a0ab51ea0b46e9ad2aeb3327a4b0ce3feae04f32ba26326bf585b5779bd) GAME_BUILD=Steam ;;
+*) echo "$SRC/noita.exe is not a supported build (Noita, Build Jan 25 2025, GOG or Steam)"; exit 1 ;;
+esac
+[ "$(sha msvcp120.dll)" = 87c42ca155473e4e71857d03497c8cbc28fa8ff7f2c8d72e8a1f39b71078f608 ] ||
+    { echo "$SRC/msvcp120.dll is not the supported build"; exit 1; }
 [ -f "$SRC/data/data.wak" ] || { echo "no Noita install at $SRC (data/data.wak missing)"; exit 1; }
 SRC=$(cd "$SRC" && pwd)
 made_here() {  # made by this script (NoitamacGameDir: before the project was renamed)
@@ -50,10 +55,13 @@ fi
 
 if [ $BUILD = 1 ]; then
     export NOITA_DIR="$SRC"  # tools/pe.py reads the modules from here
+    # Cached analysis (discover.pkl, regsum.pkl, ...) is for one noita.exe: drop it when the exe changes.
+    [ "$(cat build/noita/exe.sha256 2>/dev/null)" = "$EXE_SHA" ] || rm -rf build/noita
+    mkdir -p build/noita && echo "$EXE_SHA" >build/noita/exe.sha256
     for m in noita msvcp120; do
         [ -f "build/$m/discover.pkl" ] || uv run tools/discover.py "$m"
     done
-    uv run tools/build_all.py
+    uv run tools/build_all.py ${MINA4MAC_BUILD_ARGS:-}
 fi
 [ -x build/mina4mac ] || { echo "build/mina4mac is missing (run without --no-build)"; exit 1; }
 
@@ -82,6 +90,11 @@ if [ -f build/fmod_api/lib/libfmodstudio.dylib ]; then
     cp build/fmod_api/lib/libfmod.dylib build/fmod_api/lib/libfmodstudio.dylib "$C/Frameworks/"
     fmod=yes
 fi
+steam=no
+if [ "$GAME_BUILD" = Steam ] && [ -f build/steam_api/libsteam_api.dylib ]; then
+    cp build/steam_api/libsteam_api.dylib "$C/Frameworks/"
+    steam=yes
+fi
 icon=$(ls "$SRC"/goggame-*.ico 2>/dev/null | head -1 || true)
 [ -n "$icon" ] && sips -s format icns "$icon" --out "$C/Resources/Noita.icns" >/dev/null
 
@@ -99,6 +112,7 @@ if [ ! -f "\$NOITA_DIR/noita.exe" ]; then
     exit 1
 fi
 [ -f "\$C/Frameworks/libfmodstudio.dylib" ] && export MINA4MAC_FMOD="\${MINA4MAC_FMOD:-\$C/Frameworks}"
+[ -f "\$C/Frameworks/libsteam_api.dylib" ] && export MINA4MAC_STEAM="\${MINA4MAC_STEAM:-\$C/Frameworks}"
 $FPS
 LOG="\$HOME/Library/Logs/mina4mac.log"
 mkdir -p "\$HOME/Library/Logs"
@@ -132,7 +146,7 @@ codesign -s - -f "$C/Frameworks/"*.dylib "$C/MacOS/mina4mac"
 codesign -s - -f "$TMP"
 rm -rf "$APP"
 mv "$TMP" "$APP"
-echo "$APP: game $SRC, FMOD $fmod ($(du -sh "$APP" | cut -f1))"
+echo "$APP: game $SRC ($GAME_BUILD), FMOD $fmod, Steam $steam ($(du -sh "$APP" | cut -f1))"
 
 # The app's save (AppData under ~/Library/Application Support/mina4mac, as runtime/shell32.c maps it).
 SAVE="$HOME/Library/Application Support/mina4mac/AppData/LocalLow/Nolla_Games_Noita/save00/mod_config.xml"

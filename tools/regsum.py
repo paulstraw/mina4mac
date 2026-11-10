@@ -32,7 +32,7 @@ from pathlib import Path
 from capstone import x86
 
 sys.path.insert(0, str(Path(__file__).parent))
-from pe import ROOT, build_dir, load as load_image  # noqa: E402
+from pe import ROOT, build_data, build_dir, load as load_image  # noqa: E402
 
 GPR = ["eax", "ecx", "edx", "ebx", "esp", "ebp", "esi", "edi"]
 SAVED = ("ebx", "esi", "edi", "ebp")
@@ -104,7 +104,7 @@ def cache_key(module, extern):
     h.update(str((build_dir(module) / "discover.pkl").stat().st_mtime_ns).encode())
     h.update(repr(sorted((k, sorted(v[0]), v[1]) for k, v in extern.items())).encode())
     h.update(VCALL_MODE.encode())
-    targets = Path(__file__).with_name("icall_targets.txt")  # tools/slots.py's indirect call sites
+    targets = build_data("icall_targets.txt")  # tools/slots.py's indirect call sites
     h.update(targets.read_bytes() if targets.exists() else b"")
     return h.hexdigest()
 

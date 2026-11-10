@@ -1,8 +1,9 @@
 """Load the game's PE modules (from the user's own install) at their chosen guest bases and expose
 sections, relocations, imports and exports."""
+import hashlib
 import os
 import struct
-from functools import cached_property
+from functools import cache, cached_property
 from pathlib import Path
 
 import pefile
@@ -31,6 +32,29 @@ MODULES = {
 
 def game_dir() -> Path:
     return Path(os.environ.get("NOITA_DIR", DEFAULT_GAME_DIR))
+
+
+# Supported game builds, by noita.exe SHA-256. Data observed at run time (indirect call targets, inline cache
+# sites) is keyed by addresses in one build's exe, so each build has its own copy (build_data).
+BUILDS = {
+    "f0f5ffd1c64558663ac7cffaf689f4899732a56494c3530b806bf3357d094363": "gog",    # Jan 25 2025, GOG
+    "808d2a0ab51ea0b46e9ad2aeb3327a4b0ce3feae04f32ba26326bf585b5779bd": "steam",  # Jan 25 2025, Steam depot 881101
+}
+
+
+@cache
+def game_build() -> str:
+    """The supported build in game_dir() ("gog" or "steam"); exits on any other noita.exe."""
+    sha = hashlib.sha256((game_dir() / "noita.exe").read_bytes()).hexdigest()
+    if sha not in BUILDS:
+        raise SystemExit(f"{game_dir() / 'noita.exe'} is not a supported build")
+    return BUILDS[sha]
+
+
+def build_data(name: str) -> Path:
+    """tools/<name> for the GOG build, tools/<stem>.<build><suffix> for the others."""
+    p = ROOT / "tools" / name
+    return p if game_build() == "gog" else p.with_name(f"{p.stem}.{game_build()}{p.suffix}")
 
 
 def build_dir(module: str) -> Path:

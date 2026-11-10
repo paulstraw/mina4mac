@@ -10,7 +10,11 @@ cd "$(dirname "$0")/.."
 SEED=${1:-$RANDOM}
 LOG=build/check
 mkdir -p "$LOG"
+# Per build (tools/pe.py BUILDS): tools/lifted_baseline.txt for GOG, tools/lifted_baseline.<build>.txt for others,
+# started at the first run's count.
+GAME_BUILD=$(uv run python -c 'import sys; sys.path.insert(0, "tools"); import pe; print(pe.game_build())') || exit 1
 BASELINE_FILE=tools/lifted_baseline.txt
+[ "$GAME_BUILD" = gog ] || BASELINE_FILE=tools/lifted_baseline.$GAME_BUILD.txt
 status=0
 
 step() {  # step <name> <cmd...>: run, log to $LOG/<name>.log, abort on non-zero exit
@@ -26,7 +30,7 @@ step() {  # step <name> <cmd...>: run, log to $LOG/<name>.log, abort on non-zero
 step survey uv run tools/survey.py
 lifted=$(sed -nE 's/^functions lifted ([0-9,]+)\/([0-9,]+).*/\1/p' "$LOG/survey.log" | tr -d ,)
 total=$(sed -nE 's/^functions lifted ([0-9,]+)\/([0-9,]+).*/\2/p' "$LOG/survey.log" | tr -d ,)
-baseline=$(cat "$BASELINE_FILE")
+baseline=$(cat "$BASELINE_FILE" 2>/dev/null || echo 0)
 if [ -z "$lifted" ]; then
     echo "survey: could not parse lifted count"; exit 1
 elif [ "$lifted" -lt "$baseline" ]; then

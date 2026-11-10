@@ -43,9 +43,9 @@ from capstone import x86
 
 sys.path.insert(0, str(Path(__file__).parent))
 import regsum  # noqa: E402
+from pe import build_data  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-SITE_TARGETS = ROOT / "tools/icall_targets.txt"
 GPR = regsum.GPR
 R8 = {"al": "eax", "cl": "ecx", "dl": "edx", "bl": "ebx", "ah": "eax", "ch": "ecx", "dh": "edx", "bh": "ebx"}
 R16 = {"ax": "eax", "cx": "ecx", "dx": "edx", "bx": "ebx", "sp": "esp", "bp": "ebp", "si": "esi", "di": "edi"}
@@ -63,8 +63,9 @@ def _s32(v):
     return ((v + 0x80000000) & 0xffffffff) - 0x80000000
 
 
-def load_site_targets(path=SITE_TARGETS):
+def load_site_targets(path=None):
     """{indirect call site: a target observed there} from tools/icall_targets.txt ("site target" hex lines)."""
+    path = path or build_data("icall_targets.txt")
     if not path.exists():
         return {}
     out = {}
@@ -561,9 +562,10 @@ def solve(facts, summaries, site_targets=None):
     return plans, why
 
 
-def write_site_targets(profiles, path=SITE_TARGETS):
+def write_site_targets(profiles, path=None):
     """One target per indirect call site (its most-called one) from --icprof profiles ("site target calls" lines).
     Import thunks (0xf0000000 and up) are left out: they have no address summary."""
+    path = path or build_data("icall_targets.txt")
     best = {}
     for p in profiles:
         for line in Path(p).read_text().splitlines():

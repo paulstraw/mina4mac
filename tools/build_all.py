@@ -35,12 +35,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from lift import FnLifter, Program, ROOT, Unsupported  # noqa: E402
 import regsum  # noqa: E402
 import slots  # noqa: E402
-from pe import MODULES, build_dir  # noqa: E402
+from pe import MODULES, build_data, build_dir, load  # noqa: E402
 import gen_gl  # noqa: E402
 import gen_sdl  # noqa: E402
 
 GEN = ROOT / "build/gen_all"
-LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "kernel32_file.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "shell32.c", "galaxy.c", "wininet.c", "ws2_32.c", "user32.c", "fmod.c", "fmod_stub.c", "opengl32.c", "thread.c", "sdl2_stdlib.c", "joblog.c", "sched.c")  # runtime files only the launcher links
+LAUNCHER = ("main.c", "heap.c", "proc.c", "msvcr120.c", "msvcr120_stdio.c", "msvcr120_string.c", "kernel32.c", "kernel32_file.c", "undname.c", "msvcr120_concrt.c", "sync.c", "hle.c", "msvcr120_math.c", "shlwapi.c", "shell32.c", "galaxy.c", "steam.c", "wininet.c", "ws2_32.c", "user32.c", "fmod.c", "fmod_stub.c", "opengl32.c", "thread.c", "sdl2_stdlib.c", "joblog.c", "sched.c")  # runtime files only the launcher links
 SDL = ("sdl2.c",)  # runtime files of the SDL2 bridge (launcher only; compiled with the host SDL2's flags)
 LUA = ("lua51.c",)  # the LuaJIT bridge (launcher only; compiled with LUA_CFLAGS, linked with LUAJIT_LIB)
 LUAJIT_SRC = ROOT / "third_party/luajit"
@@ -54,7 +54,6 @@ PGO_RAW = PGO_DIR / "raw"  # the instrumented binary writes default_<signature>.
 PGO_DATA = PGO_DIR / "mina4mac.profdata"
 PGO_ORDER = PGO_DIR / "mina4mac.order"
 LTO_CACHE = ROOT / "build/lto_cache"
-IC_SITES = ROOT / "tools/icache_sites.txt"
 _prog = None
 
 
@@ -182,7 +181,7 @@ def main():
                     help="ThinLTO (default; LuaJIT stays a plain archive): heavy work_ms -3.5%%, build +40 s")
     ap.add_argument("--icprof", action="store_true",
                     help="count indirect calls per (site, target): run with MINA4MAC_ICPROF=<file>, then tools/icache.py")
-    ap.add_argument("--ic", default=str(IC_SITES.relative_to(ROOT)),
+    ap.add_argument("--ic", default=None,
                     help="inline-cache sites from tools/icache.py ('none' for plain guest_call everywhere)")
     ap.add_argument("--chunking", choices=("roundrobin", "contiguous"), default="roundrobin",
                     help="contiguous keeps neighbours (MSVC links a source file's functions together) in one chunk, so direct calls can inline")
@@ -207,7 +206,7 @@ def main():
         starts_by_mod[m] = _module_starts(prog)
     starts = sorted(a for s in starts_by_mod.values() for a in s)
     assert len(starts) == len(set(starts)), "modules overlap"
-    ic_path = ROOT / args.ic
+    ic_path = ROOT / args.ic if args.ic else build_data("icache_sites.txt")
     # An --icprof build keeps the inline-cache branches, so its sync counts match the default build's, but every
     # branch calls guest_call_site, so the site profile is the same either way.
     ic = {} if args.ic == "none" or not ic_path.exists() else _load_ic(ic_path, set(starts))
@@ -242,6 +241,7 @@ def main():
     ic_fns = sorted({t for ts in ic.values() for t in ts})  # rt_hook warns about these: cached sites bypass hooks
     table += ["const uint32_t IC_TARGETS[] = {" + ",".join([f"{t:#x}u" for t in ic_fns] + ["0"]) + "};",
               f"const int IC_TARGET_COUNT = {len(ic_fns)};"]
+    table.append(f"const uint32_t EXE_ENTRY = {load('noita').entry:#x}u;")  # main.c checks the exe it maps
     (GEN / "table.c").write_text("\n".join(table))
     build_luajit()
     launcher = [*LAUNCHER, *SDL, *LUA, "sdl2_gen.c", "gl_gen.c"]
