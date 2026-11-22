@@ -3,9 +3,8 @@
 // SDL_GL_SetSwapInterval).
 #include "sdl2.h"
 
-#define GL_SILENCE_DEPRECATION  // CGLSetParameter (MINA4MAC_VSYNC=native)
 #include <CoreVideo/CoreVideo.h>
-#include <OpenGL/OpenGL.h>
+#include <OpenGL/OpenGL.h>  // CGLGetCurrentContext, for the display link's display
 #include <math.h>
 #include <pthread.h>
 #include <fcntl.h>
@@ -373,13 +372,10 @@ static double now_ms(clockid_t id) {
 // the last swap, so a frame that runs a little over a refresh interval waits for a whole extra one.
 //   late (default): late swap, paced here: SDL's pacing off (0), our own display link counts ticks, and a swap
 //         waits only if no tick has passed since the last one, and never longer than 3 refresh periods (SDL's
-//         waits have no timeout: a display link that stops hung the game in SDL's swap, PLAN5 Phase 18b). A
-//         window is composited, so it doesn't tear. Jungle and heavy run 14-43% faster than with sdl.
+//         waits have no timeout, and a display link that stops hangs the game inside SDL's swap). A window is
+//         composited, so it doesn't tear. Jungle and heavy run 14-43% faster than with sdl.
 //   sdl: the game's interval, as is (the old behavior).
-//   sdllate: SDL's own late swap (-1), the same rule as late but without the timeout.
-//   native: SDL's pacing off (0) and the context's own swap interval (CGL) on: macOS blocks the swap only when
-//         its queue of frames is full. As fast as late in the A/Bs, but not shown to wait for the display.
-// Interval 0 (vsync off in the game's settings) is passed through in every mode.
+// An unknown value warns and means late. Interval 0 (vsync off in the game's settings) is passed through in both.
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"  // CVDisplayLink (deprecated in macOS 15; SDL uses it)
 static struct {
@@ -418,7 +414,10 @@ static int pace_start(void) {
         if (CVDisplayLinkCreateWithActiveCGDisplays(&PACE.link) != kCVReturnSuccess) return PACE.link = NULL, -1;
         CVDisplayLinkSetOutputCallback(PACE.link, pace_tick, NULL);
         pace_follow();
-        if (CVDisplayLinkStart(PACE.link) != kCVReturnSuccess) return -1;
+        if (CVDisplayLinkStart(PACE.link) != kCVReturnSuccess) {  // release it, so the next call tries again
+            CVDisplayLinkRelease(PACE.link);
+            return PACE.link = NULL, -1;
+        }
     }
     pthread_mutex_lock(&PACE.mu);
     PACE.seen = PACE.ticks;
@@ -457,21 +456,17 @@ static void pace_wait(SDL_Window *w) {
 
 HOST_CDECL(SDL2, SDL_GL_SetSwapInterval) {  // int SDL_GL_SetSwapInterval(int interval)
     static const char *mode;
-    if (!mode) mode = getenv("MINA4MAC_VSYNC") && *getenv("MINA4MAC_VSYNC") ? getenv("MINA4MAC_VSYNC") : "late";
+    if (!mode) {
+        const char *e = getenv("MINA4MAC_VSYNC");
+        mode = e && !strcmp(e, "sdl") ? "sdl" : "late";
+        if (e && *e && strcmp(e, "sdl") && strcmp(e, "late"))
+            fprintf(stderr, "[vsync] unknown MINA4MAC_VSYNC=%s (late or sdl): using late\n", e);
+    }
     int want = (int)ARG(0), r;
     PACE.on = 0;
     if (want > 0 && !strcmp(mode, "late")) {
         r = SDL_GL_SetSwapInterval(0);
         if (r == 0 && pace_start() < 0) r = SDL_GL_SetSwapInterval(want);
-    } else if (want > 0 && !strcmp(mode, "sdllate")) {
-        r = SDL_GL_SetSwapInterval(-1);
-        if (r < 0) r = SDL_GL_SetSwapInterval(want);
-    } else if (want > 0 && !strcmp(mode, "native")) {
-        r = SDL_GL_SetSwapInterval(0);
-        GLint one = 1;
-        CGLContextObj ctx = CGLGetCurrentContext();
-        if (r == 0 && (!ctx || CGLSetParameter(ctx, kCGLCPSwapInterval, &one) != kCGLNoError))
-            r = SDL_GL_SetSwapInterval(want);
     } else {
         r = SDL_GL_SetSwapInterval(want);
     }
@@ -496,12 +491,13 @@ HOST_CDECL(SDL2, SDL_GL_SwapWindow) {  // void SDL_GL_SwapWindow(SDL_Window *win
     SDL_GL_SwapWindow(w);
     if (joblog_on) joblog_frame(j0, joblog_now());
     if (!timed) return;
-    double after = now_ms(CLOCK_MONOTONIC_RAW);
+    double after = now_ms(CLOCK_MONOTONIC_RAW), after_cpu = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    // both clocks read before count_frame: its once-a-second title and telemetry count in the next frame's work
     count_frame(w, wall0 ? wall - wall0 : 0, wall0 ? cpu - cpu0 : 0);
     if (fd >= 0 && wall0) {
         char line[64];
         int n = snprintf(line, sizeof line, "f %.3f %.3f %.3f\n", wall - wall0, cpu - cpu0, after - wall);
         if (write(fd, line, n) < 0) close(fd), fd = -1;
     }
-    wall0 = after, cpu0 = now_ms(CLOCK_THREAD_CPUTIME_ID);
+    wall0 = after, cpu0 = after_cpu;
 }

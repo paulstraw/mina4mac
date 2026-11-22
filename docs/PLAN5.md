@@ -145,7 +145,7 @@ interval. The old framelogs show it: flood on the 100 Hz display had work+swap i
   (hostcall `SDL_GL_SwapWindow`, inside the timed span so swap_ms still holds the wait) waits only if no tick has
   passed since the last swap, for at most 3 refresh periods. After a timeout it swaps unpaced (the game's limit
   holds 60) until the link ticks again, with a `[vsync] no display tick` line every 100 timeouts. The link
-  follows the window's display (checked every 64 swaps). `sdllate` keeps SDL's -1 for comparison. Links CoreVideo.
+  follows the window's display (checked every 64 swaps). Links CoreVideo.
   - Silent link, simulated with an lldb breakpoint that returns from the tick callback: the game kept running
     (35 fps with a 25 ms wait per frame, before the unpaced fallback was added), no hang. The fallback itself
     wasn't re-tested: two more lldb attempts didn't hold the breakpoint.
@@ -153,6 +153,9 @@ interval. The old framelogs show it: flood on the 100 Hz display had work+swap i
     (37.6-48.4) → **54.0** (52.9-55.2), +43%; jungle 37.0/41.9/45.8 → **55.1, 54.1** (the comparison gave up
     after an sdl run stalled twice, max frame 1.1 s). The same as SDL's -1 at 60 Hz (55.3 both).
   - **Default: own `late`**.
+  - 2026-11-22, after the PR review: only `late` (default) and `sdl` (the escape hatch) remain; `sdllate` and
+    `native` existed only for the A/Bs and are gone, with the CGL swap-interval code. An unknown value warns and
+    uses `late`. A failed `CVDisplayLinkStart` now releases the link, so the next call retries.
 - [ ] User playtest of the rebuilt `Noita.app` (`--telemetry`): frame pacing, tearing in fullscreen, the 60 cap,
   and whether the snowcave 48 fps dip is gone. This likely answers Phase 20's "48.0 question": 48 is what interval-1
   pacing on a 120 Hz display gives frames of ~17-25 ms.
