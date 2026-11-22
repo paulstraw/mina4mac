@@ -4,13 +4,16 @@
 enum { MAX_PATH = 260 };
 
 // PathAppendW(path[MAX_PATH], more): strip more's leading backslashes, join with one backslash, then
-// canonicalise like PathCanonicalize ("." components dropped, ".." removes the previous one).
+// canonicalise like PathCanonicalize ("." components dropped, ".." removes the previous one). As in
+// Windows (PathCombine), a UNC path ("\\server\share") or one with a drive ("X:...") replaces path.
 HOST_STDCALL(shlwapi, PathAppendW, 8) {
     uint32_t path = ARG(0), more = ARG(1);
     uint16_t buf[2 * MAX_PATH + 2];
     uint32_t n = 0;
     while (rd16(path + 2 * n) && n < MAX_PATH) buf[n] = rd16(path + 2 * n), n++;
-    while (rd16(more) == '\\') more += 2;
+    if (rd16(more) == '\\' && rd16(more + 2) == '\\') n = 0;
+    else while (rd16(more) == '\\') more += 2;
+    if (rd16(more) && rd16(more + 2) == ':') n = 0;
     if (n && buf[n - 1] != '\\' && rd16(more)) buf[n++] = '\\';
     for (; rd16(more) && n < 2 * MAX_PATH; more += 2) buf[n++] = rd16(more);
     buf[n] = 0;
