@@ -317,6 +317,13 @@ static void initializer_imports(CPU *cp, CPU *c2) {
     char out[600];
     utf16_to_utf8(path, out, sizeof out);
     CHECK("PathAppendW + canonicalise", c.eax == 1 && !strcmp(out, "Z:\\a\\c\\d.txt"), 1);
+    // A path with a drive or a UNC path replaces the first one (Steam's workshop install folders).
+    call(&c, "SHLWAPI.dll", "PathAppendW", 2, (uint32_t[]){path, gws("Y:\\w\\mod.xml")});
+    utf16_to_utf8(path, out, sizeof out);
+    CHECK("PathAppendW drive path replaces", c.eax == 1 && !strcmp(out, "Y:\\w\\mod.xml"), 1);
+    call(&c, "SHLWAPI.dll", "PathAppendW", 2, (uint32_t[]){path, gws("\\\\srv\\share\\f")});
+    utf16_to_utf8(path, out, sizeof out);
+    CHECK("PathAppendW UNC path replaces", c.eax == 1 && !strcmp(out, "\\\\srv\\share\\f"), 1);
     CHECK("GetCurrentDirectoryW too small", K32("GetCurrentDirectoryW", 2, path) > 3, 1);
     uint32_t len = K32("GetCurrentDirectoryW", 260, path);
     utf16_to_utf8(path, out, sizeof out);
