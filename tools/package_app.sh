@@ -82,8 +82,11 @@ if [ -f build/fmod_api/lib/libfmodstudio.dylib ]; then
     cp build/fmod_api/lib/libfmod.dylib build/fmod_api/lib/libfmodstudio.dylib "$C/Frameworks/"
     fmod=yes
 fi
-icon=$(ls "$SRC"/goggame-*.ico 2>/dev/null | head -1 || true)
-[ -n "$icon" ] && sips -s format icns "$icon" --out "$C/Resources/Noita.icns" >/dev/null
+# The app icon: GOG's (in app/), else the window icon both builds ship (noita.exe has no icon resources).
+# icns needs a standard size, hence -z.
+for icon in "$SRC"/goggame-*.ico "$SRC"/app/goggame-*.ico "$SRC"/data/icon.bmp ""; do [ -f "$icon" ] && break; done
+[ -z "$icon" ] || sips -z 256 256 -s format icns "$icon" --out "$C/Resources/Noita.icns" >/dev/null ||
+    echo "warning: couldn't convert $icon to an app icon"
 
 # The bundle's executable: point the launcher at the install, keep the display awake (with it asleep,
 # SDL_GL_SwapWindow blocks on vsync) and log to ~/Library/Logs. NOITA_DIR/MINA4MAC_* from the environment win.
